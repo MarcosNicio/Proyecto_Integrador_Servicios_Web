@@ -36,9 +36,7 @@ public class MascotaService {
     // Repositorio de clientes para validar la existencia del propietario
     private final ClienteRepository clienteRepository;
 
-    // =========================================================================
     // MÉTODOS PÚBLICOS DE NEGOCIO - MASCOTAS
-    // =========================================================================
 
     @Transactional
     public MascotaResponseDTO crearMascota(MascotaRequestDTO dto) {
@@ -67,7 +65,8 @@ public class MascotaService {
 
     @Transactional(readOnly = true)
     public MascotaResponseDTO obtenerPorCodigo(String codigoMascota) {
-        // Convierte el folio de negocio (ej. PAC-0001) a su ID interno y obtiene la mascota
+        // Convierte el folio de negocio (ej. PAC-0001) a su ID interno y obtiene la
+        // mascota
         Integer idMascota = extraerIdDesdeCodigoMascota(codigoMascota);
         return obtenerPorId(idMascota);
     }
@@ -91,7 +90,8 @@ public class MascotaService {
 
         String termino = nombreOCodigo.trim();
 
-        // Si el usuario busca por folio clínico (ej. PAC-0001), resuelve directamente por código
+        // Si el usuario busca por folio clínico (ej. PAC-0001), resuelve directamente
+        // por código
         if (termino.toUpperCase().startsWith(PREFIJO_CODIGO_MASCOTA)) {
             Integer idMascota = extraerIdDesdeCodigoMascota(termino);
             return mascotaRepository.findById(idMascota)
@@ -107,7 +107,8 @@ public class MascotaService {
 
     @Transactional
     public MascotaResponseDTO actualizarMascota(Integer idMascota, MascotaRequestDTO dto) {
-        // Obtiene la mascota existente y valida al cliente propietario indicado en el DTO
+        // Obtiene la mascota existente y valida al cliente propietario indicado en el
+        // DTO
         Mascota mascotaExistente = buscarMascotaPorIdOError(idMascota);
         Cliente propietario = buscarClientePropietarioOError(dto.getIdCliente());
 
@@ -120,7 +121,8 @@ public class MascotaService {
 
     @Transactional
     public void desactivarMascota(Integer idMascota) {
-        // Aplica baja lógica cambiando el estado activo a false para conservar integridad histórica
+        // Aplica baja lógica cambiando el estado activo a false para conservar
+        // integridad histórica
         Mascota mascota = buscarMascotaPorIdOError(idMascota);
         mascota.setActivo(false);
         mascotaRepository.save(mascota);
@@ -135,9 +137,7 @@ public class MascotaService {
         return mapearAMascotaResponseDTO(mascotaReactivada);
     }
 
-    // =========================================================================
     // MÉTODOS PÚBLICOS DE NEGOCIO - ANTECEDENTES CLÍNICOS
-    // =========================================================================
 
     @Transactional
     public AntecedenteClinicoResponseDTO agregarAntecedente(Integer idMascota, AntecedenteClinicoRequestDTO dto) {
@@ -157,7 +157,8 @@ public class MascotaService {
         // Verifica que la mascota exista
         buscarMascotaPorIdOError(idMascota);
 
-        // Si se proporciona un tipo (ej. ALERGIA), filtra por tipo; si no, trae todo el historial ordenado por fecha
+        // Si se proporciona un tipo (ej. ALERGIA), filtra por tipo; si no, trae todo el
+        // historial ordenado por fecha
         List<AntecedenteClinico> antecedentes = (tipo != null)
                 ? antecedenteClinicoRepository.findByMascotaIdMascotaAndTipo(idMascota, tipo)
                 : antecedenteClinicoRepository.findByMascotaIdMascotaOrderByFechaRegistroDesc(idMascota);
@@ -184,16 +185,16 @@ public class MascotaService {
 
     @Transactional
     public void eliminarAntecedente(Integer idMascota, Integer idAntecedente) {
-        // Verifica que el antecedente exista y pertenezca estrictamente a la mascota indicada
+        // Verifica que el antecedente exista y pertenezca estrictamente a la mascota
+        // indicada
         AntecedenteClinico antecedente = buscarAntecedenteDeMascotaOError(idMascota, idAntecedente);
         antecedenteClinicoRepository.delete(antecedente);
     }
 
-    // =========================================================================
-    // FUNCIONES AUXILIARES REUTILIZABLES (CLEAN CODE / DRY)
-    // =========================================================================
+    // FUNCIONES AUXILIARES REUTILIZABLES
 
-    // Convierte una entidad Mascota a su DTO de respuesta incluyendo su folio clínico (PAC-XXXX)
+    // Convierte una entidad Mascota a su DTO de respuesta incluyendo su folio
+    // clínico (PAC-XXXX)
     public MascotaResponseDTO mapearAMascotaResponseDTO(Mascota mascota) {
         // Mapea la lista de antecedentes clínicos de la mascota
         List<AntecedenteClinicoResponseDTO> antecedentesDTO = (mascota.getAntecedentesClinicos() != null)
@@ -237,7 +238,8 @@ public class MascotaService {
         try {
             return Integer.parseInt(parteNumerica);
         } catch (NumberFormatException e) {
-            throw new BusinessException("Formato de código de mascota inválido: '" + codigoMascota + "'. Ejemplo válido: PAC-0001");
+            throw new BusinessException(
+                    "Formato de código de mascota inválido: '" + codigoMascota + "'. Ejemplo válido: PAC-0001");
         }
     }
 
@@ -250,15 +252,18 @@ public class MascotaService {
     // Busca al cliente propietario por su ID o lanza excepción 404 estandarizada
     private Cliente buscarClientePropietarioOError(Integer idCliente) {
         return clienteRepository.findById(idCliente)
-                .orElseThrow(() -> new ResourceNotFoundException("Cliente propietario no encontrado con ID: " + idCliente));
+                .orElseThrow(
+                        () -> new ResourceNotFoundException("Cliente propietario no encontrado con ID: " + idCliente));
     }
 
-    // Busca un antecedente clínico validando que pertenezca a la mascota indicada o lanza 404
+    // Busca un antecedente clínico validando que pertenezca a la mascota indicada o
+    // lanza 404
     private AntecedenteClinico buscarAntecedenteDeMascotaOError(Integer idMascota, Integer idAntecedente) {
         return antecedenteClinicoRepository
                 .findByIdAntecedenteAndMascotaIdMascota(idAntecedente, idMascota)
                 .orElseThrow(() -> new ResourceNotFoundException(
-                        "No se encontró el antecedente con ID " + idAntecedente + " para la mascota con ID " + idMascota));
+                        "No se encontró el antecedente con ID " + idAntecedente + " para la mascota con ID "
+                                + idMascota));
     }
 
     // Asigna y limpia los campos provenientes del DTO hacia la entidad Mascota
@@ -311,7 +316,8 @@ public class MascotaService {
         return cliente.getNombre() + " " + cliente.getApellidos();
     }
 
-    // Limpia espacios en blanco de textos opcionales o devuelve null si están vacíos
+    // Limpia espacios en blanco de textos opcionales o devuelve null si están
+    // vacíos
     private String limpiarTextoOpcional(String texto) {
         return (texto != null && !texto.isBlank()) ? texto.trim() : null;
     }

@@ -104,10 +104,7 @@ public class ClienteService {
         return mapearAClienteResponseDTO(clienteActualizado);
     }
 
-    // =========================================================================
-    // MÉTODOS PÚBLICOS DE NEGOCIO - RESPONSABLES EXTRA (CONTACTOS EMERGENCIA)
-    // =========================================================================
-
+    // MÉTODOS PÚBLICOS DE NEGOCIO - RESPONSABLES EXTRA (CONTACTOS DE EMERGENCIA)
     @Transactional
     public ResponsableExtraResponseDTO agregarResponsableExtra(Integer idCliente, ResponsableExtraRequestDTO dto) {
         // Valida que el cliente titular exista
@@ -153,9 +150,7 @@ public class ClienteService {
         responsableExtraRepository.delete(responsable);
     }
 
-    // =========================================================================
-    // FUNCIONES AUXILIARES PRIVADAS REUTILIZABLES (CLEAN CODE / DRY)
-    // =========================================================================
+    // FUNCIONES AUXILIARES PRIVADAS REUTILIZABLES 
 
     // Genera el código o folio de negocio legible del cliente (ej. 1 -> CLI-0001)
     private String generarCodigoCliente(Integer idCliente) {
