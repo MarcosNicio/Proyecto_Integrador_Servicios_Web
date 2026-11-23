@@ -27,13 +27,13 @@ El script con las 24 tablas y los datos iniciales está en [`database/veterinari
 3. Crea la base de datos (te pedirá la contraseña del usuario `postgres`):
 
    ```bash
-   psql -U postgres -h localhost -p 5432 -c "CREATE DATABASE veterinaria_db ENCODING 'UTF8';"
+   psql -U postgres -h localhost -p 5433 -c "CREATE DATABASE veterinaria_db ENCODING 'UTF8';"
    ```
 
 4. Ejecuta el script para crear las tablas y cargar los datos iniciales:
 
    ```bash
-   psql -U postgres -h localhost -p 5432 -d veterinaria_db -f database/veterinaria_db.sql
+   psql -U postgres -h localhost -p 5433 -d veterinaria_db -f database/veterinaria_db.sql
    ```
 
    En Windows, si los acentos se ven mal, ejecuta antes en PowerShell:
@@ -42,7 +42,7 @@ El script con las 24 tablas y los datos iniciales está en [`database/veterinari
    $env:PGCLIENTENCODING = "UTF8"
    ```
 
-> **Puerto:** `5432` es el puerto por defecto de PostgreSQL. Si tienes más de una versión instalada, cada una usa un puerto distinto (5432, 5433, ...). Revisa el valor de `port` en el archivo `postgresql.conf` de la versión que quieras usar.
+> **Puerto:** el proyecto está configurado con el puerto **`5433`** porque la base se creó en PostgreSQL 18, que en la PC de desarrollo convive con PostgreSQL 16 (este último ocupa el `5432`). Cada versión instalada usa un puerto distinto: la primera toma el `5432` (el puerto por defecto), la siguiente el `5433`, etc. Si en tu PC PostgreSQL está en otro puerto (lo normal con una sola versión es `5432`), cambia `5433` por tu puerto en estos comandos y en la configuración del proyecto (ver [Configurar la conexión](#configurar-la-conexión)). Puedes confirmar el puerto en el valor de `port` del archivo `postgresql.conf` de tu versión.
 
 ### Opción 2: desde pgAdmin
 
@@ -55,7 +55,7 @@ El script con las 24 tablas y los datos iniciales está en [`database/veterinari
 ### Verificar la instalación
 
 ```bash
-psql -U postgres -h localhost -p 5432 -d veterinaria_db -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';"
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';"
 ```
 
 El resultado debe ser **24**.
@@ -65,7 +65,7 @@ El resultado debe ser **24**.
 El script falla si las tablas ya existen. Para reiniciar la base, bórrala y repite los pasos anteriores:
 
 ```bash
-psql -U postgres -h localhost -p 5432 -c "DROP DATABASE IF EXISTS veterinaria_db;"
+psql -U postgres -h localhost -p 5433 -c "DROP DATABASE IF EXISTS veterinaria_db;"
 ```
 
 >  Esto elimina todos los datos de la base.
@@ -79,7 +79,40 @@ El script carga:
 - Horario de la clínica para los 7 días de la semana
 - Usuario administrador: `admin@veterinaria.com`
 
+## Configurar la conexión
+
+La conexión está en `src/main/resources/application.properties`:
+
+```properties
+spring.datasource.url=${DB_URL:jdbc:postgresql://localhost:5433/veterinaria_db}
+spring.datasource.username=${DB_USERNAME:postgres}
+spring.datasource.password=${DB_PASSWORD:}
+```
+
+La contraseña **no** se guarda en el repositorio: se lee de la variable de entorno `DB_PASSWORD`.
+
+Si tu PostgreSQL usa otro puerto (por ejemplo `5432`), tienes dos opciones:
+
+- **Sin tocar el código (recomendado):** define la variable `DB_URL` con tu puerto antes de ejecutar.
+- **Cambiando el archivo:** reemplaza `5433` por tu puerto en `application.properties` (no subas ese cambio al repositorio).
+
+Ejemplo en PowerShell:
+
+```powershell
+$env:DB_PASSWORD = "tu_contraseña"
+$env:DB_URL = "jdbc:postgresql://localhost:5432/veterinaria_db"   # solo si tu puerto no es 5433
+```
+
+En Linux / macOS:
+
+```bash
+export DB_PASSWORD="tu_contraseña"
+export DB_URL="jdbc:postgresql://localhost:5432/veterinaria_db"   # solo si tu puerto no es 5433
+```
+
 ## Ejecutar el proyecto
+
+Primero define `DB_PASSWORD` (y `DB_URL` si aplica) como se indica arriba, y luego:
 
 ```bash
 # Windows
