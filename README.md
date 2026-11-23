@@ -132,3 +132,32 @@ Con la aplicación en ejecución:
 - **Especificación OpenAPI (JSON):** http://localhost:8080/v3/api-docs
 
 Para probar endpoints protegidos, usa el botón **Authorize** y pega el token JWT obtenido en el login (sin el prefijo `Bearer`).
+
+## CORS (conexión con el frontend en React)
+
+El navegador bloquea las peticiones de una página a un servidor con distinto origen (protocolo + dominio + puerto). Como el frontend en React corre en otro puerto que el backend (`8080`), la API indica qué orígenes tienen permiso mediante CORS.
+
+La configuración está en `src/main/java/com/veterinaria/common/config/CorsConfig.java` y aplica a todas las rutas `/api/**`:
+
+| Regla | Valor |
+|---|---|
+| Orígenes permitidos | Los definidos en `app.cors.allowed-origins` |
+| Métodos | `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` |
+| Headers | `Authorization` (token JWT), `Content-Type`, `Accept` |
+| Credenciales | Permitidas |
+| Cache del preflight | 1 hora |
+
+Orígenes permitidos por defecto (`application.properties`):
+
+- `http://localhost:5173` → React con **Vite** (puerto por defecto)
+- `http://localhost:3000` → React con **Create React App**
+
+Si el frontend usa otro puerto o se publica en internet, cambia la lista sin tocar el código con la variable de entorno `CORS_ALLOWED_ORIGINS` (separada por comas):
+
+```powershell
+$env:CORS_ALLOWED_ORIGINS = "http://localhost:5173,https://mi-frontend.com"
+```
+
+> No uses `*` como origen: permitiría que cualquier sitio web consuma la API.
+
+Si en la consola del navegador aparece `has been blocked by CORS policy`, revisa que la URL exacta del frontend (incluido el puerto) esté en la lista.
