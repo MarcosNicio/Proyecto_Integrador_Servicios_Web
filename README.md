@@ -240,3 +240,28 @@ $env:JWT_SECRET = "una-clave-larga-y-aleatoria-de-al-menos-32-caracteres"
 ```
 
 > Los datos del token no van cifrados (cualquiera puede leerlos): nunca se guardan contraseñas ni datos sensibles en él.
+
+## Módulo de autenticación (`auth`)
+
+Gestiona las cuentas de acceso al sistema (tabla `USUARIOS`).
+
+### Entidad y roles
+
+- **`Usuario`** (`auth/entity/Usuario.java`): representa una fila de `USUARIOS` (correo, contraseña cifrada, rol, activo y fecha de creación). La contraseña **nunca** se guarda en texto plano.
+- **`Rol`** (`auth/entity/Rol.java`): valores permitidos para el rol de un usuario.
+
+| Rol | Acceso principal |
+|---|---|
+| `ADMIN` | Personal, configuración de la clínica y catálogos |
+| `VETERINARIO` | Consultas, expediente clínico y recetas |
+| `CAJERO` | Cobros, pagos y recibos |
+| `CLIENTE` | Sus mascotas, citas e información personal |
+
+### Repositorio
+
+`UsuarioRepository` (`auth/repository/UsuarioRepository.java`):
+
+| Método | Uso |
+|---|---|
+| `findByCorreo(correo)` | Buscar al usuario en el login |
+| `existsByCorreo(correo)` | Evitar correos repetidos en el registro |
