@@ -123,3 +123,12 @@ Primero define `DB_PASSWORD` (y `DB_URL` si aplica) como se indica arriba, y lue
 ```
 
 La aplicación se levanta en `http://localhost:8080`.
+
+## Documentación de la API (Swagger UI)
+
+Con la aplicación en ejecución:
+
+- **Swagger UI:** http://localhost:8080/swagger-ui.html
+- **Especificación OpenAPI (JSON):** http://localhost:8080/v3/api-docs
+
+Para probar endpoints protegidos, usa el botón **Authorize** y pega el token JWT obtenido en el login (sin el prefijo `Bearer`).
