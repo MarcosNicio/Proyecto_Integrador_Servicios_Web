@@ -20,9 +20,13 @@ import java.util.List;
 @Schema(description = "Información completa del perfil de una mascota")
 public class MascotaResponseDTO {
 
-    // Identificador único de la mascota
+    // Identificador numérico interno de la mascota
     @Schema(description = "Identificador único de la mascota", example = "1")
     private Integer idMascota;
+
+    // Folio o código clínico legible del paciente (Opción B: ej. PAC-0001)
+    @Schema(description = "Folio o código de expediente clínico de la mascota", example = "PAC-0001")
+    private String codigoMascota;
 
     // Identificador del cliente propietario
     @Schema(description = "Identificador del cliente propietario", example = "1")

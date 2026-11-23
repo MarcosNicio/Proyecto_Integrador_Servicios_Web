@@ -17,9 +17,13 @@ import java.util.List;
 @Schema(description = "Información detallada de un cliente registrado")
 public class ClienteResponseDTO {
 
-    // Identificador único del cliente
+    // Identificador numérico interno del cliente
     @Schema(description = "Identificador único del cliente", example = "1")
     private Integer idCliente;
+
+    // Folio o código legible de negocio del cliente (Opción B: ej. CLI-0001)
+    @Schema(description = "Folio o código de negocio legible del cliente", example = "CLI-0001")
+    private String codigoCliente;
 
     // Identificador del usuario vinculado (si tiene cuenta de acceso)
     @Schema(description = "Identificador del usuario vinculado", example = "1", nullable = true)
