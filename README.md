@@ -161,3 +161,56 @@ $env:CORS_ALLOWED_ORIGINS = "http://localhost:5173,https://mi-frontend.com"
 > No uses `*` como origen: permitiría que cualquier sitio web consuma la API.
 
 Si en la consola del navegador aparece `has been blocked by CORS policy`, revisa que la URL exacta del frontend (incluido el puerto) esté en la lista.
+
+## Manejo de errores
+
+Todos los errores de la API se responden con el mismo formato, gracias al manejador global `common/exception/GlobalExceptionHandler.java`:
+
+```json
+{
+  "timestamp": "2026-11-23T10:15:00",
+  "status": 404,
+  "error": "Not Found",
+  "message": "Mascota no encontrada con id 999",
+  "path": "/api/mascotas/999"
+}
+```
+
+En errores de validación se agrega `errors` con el mensaje de cada campo:
+
+```json
+{
+  "status": 400,
+  "message": "Datos inválidos",
+  "errors": {
+    "nombre": "El nombre es obligatorio",
+    "correo": "Formato de correo inválido"
+  }
+}
+```
+
+### Excepciones disponibles para los módulos
+
+En los servicios basta con lanzar la excepción adecuada; el manejador arma la respuesta:
+
+| Excepción | Código | Cuándo usarla |
+|---|---|---|
+| `ResourceNotFoundException` | 404 | El registro buscado no existe |
+| `BusinessException` | 400 | Se rompe una regla del negocio (ej. cita en fecha pasada) |
+| `ConflictException` | 409 | Choca con datos existentes (ej. correo ya registrado) |
+
+```java
+Mascota mascota = mascotaRepository.findById(id)
+        .orElseThrow(() -> new ResourceNotFoundException("Mascota no encontrada con id " + id));
+```
+
+### Otros errores que se manejan automáticamente
+
+| Situación | Código |
+|---|---|
+| DTO con `@Valid` que no cumple sus validaciones | 400 (con `errors`) |
+| JSON mal formado, parámetro faltante o de tipo incorrecto | 400 |
+| Ruta inexistente | 404 |
+| Método HTTP no permitido en la ruta | 405 |
+| La base de datos rechaza el dato (duplicado, llave foránea) | 409 |
+| Error inesperado | 500 con mensaje genérico (el detalle solo se registra en el log) |
