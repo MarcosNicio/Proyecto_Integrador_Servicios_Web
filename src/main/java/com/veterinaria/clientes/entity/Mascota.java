@@ -48,7 +48,7 @@ public class Mascota {
     @Column(name = "nombre", nullable = false, length = 80)
     private String nombre;
 
-    // Especie animal (ej. Perro, Gato)
+    // Especie animal 
     @Column(name = "especie", nullable = false, length = 50)
     private String especie;
 
