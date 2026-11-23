@@ -43,7 +43,8 @@ public class ClienteService {
 
     @Transactional
     public ClienteResponseDTO crearCliente(ClienteRequestDTO dto) {
-        // Verifica que el ID de usuario (si fue proporcionado) no esté vinculado a otro cliente
+        // Verifica que el ID de usuario (si fue proporcionado) no esté vinculado a otro
+        // cliente
         validarDisponibilidadUsuario(dto.getIdUsuario(), null);
 
         // Crea la instancia del cliente y le asigna los datos normalizados
@@ -64,7 +65,8 @@ public class ClienteService {
 
     @Transactional(readOnly = true)
     public ClienteResponseDTO obtenerPorCodigo(String codigoCliente) {
-        // Convierte el folio de negocio (ej. CLI-0001) a su ID interno y obtiene el cliente
+        // Convierte el folio de negocio (ej. CLI-0001) a su ID interno y obtiene el
+        // cliente
         Integer idCliente = extraerIdDesdeCodigoCliente(codigoCliente);
         return obtenerPorId(idCliente);
     }
@@ -85,7 +87,8 @@ public class ClienteService {
             return mapearListaClientesADTO(clienteRepository.findAll());
         }
 
-        // Si hay filtro, busca coincidencias por folio (CLI-XXXX), nombre/apellidos o teléfono
+        // Si hay filtro, busca coincidencias por folio (CLI-XXXX), nombre/apellidos o
+        // teléfono
         String termino = filtro.trim();
         List<Cliente> clientesFiltrados = buscarClientesPorTermino(termino);
         return mapearListaClientesADTO(clientesFiltrados);
@@ -93,7 +96,8 @@ public class ClienteService {
 
     @Transactional
     public ClienteResponseDTO actualizarCliente(Integer idCliente, ClienteRequestDTO dto) {
-        // Verifica que el cliente exista y que el ID de usuario no choque con otro registro
+        // Verifica que el cliente exista y que el ID de usuario no choque con otro
+        // registro
         Cliente clienteExistente = buscarClientePorIdOError(idCliente);
         validarDisponibilidadUsuario(dto.getIdUsuario(), idCliente);
 
@@ -110,7 +114,8 @@ public class ClienteService {
         // Valida que el cliente titular exista
         Cliente cliente = buscarClientePorIdOError(idCliente);
 
-        // Crea el nuevo contacto y aplica los datos mediante función auxiliar reutilizable
+        // Crea el nuevo contacto y aplica los datos mediante función auxiliar
+        // reutilizable
         ResponsableExtra nuevoResponsable = new ResponsableExtra();
         aplicarDatosResponsable(nuevoResponsable, dto, cliente);
 
@@ -145,12 +150,13 @@ public class ClienteService {
 
     @Transactional
     public void eliminarResponsableExtra(Integer idCliente, Integer idResponsable) {
-        // Busca el responsable verificando que pertenezca estrictamente al cliente indicado
+        // Busca el responsable verificando que pertenezca estrictamente al cliente
+        // indicado
         ResponsableExtra responsable = buscarResponsableDeClienteOError(idCliente, idResponsable);
         responsableExtraRepository.delete(responsable);
     }
 
-    // FUNCIONES AUXILIARES PRIVADAS REUTILIZABLES 
+    // FUNCIONES AUXILIARES PRIVADAS REUTILIZABLES
 
     // Genera el código o folio de negocio legible del cliente (ej. 1 -> CLI-0001)
     private String generarCodigoCliente(Integer idCliente) {
@@ -169,7 +175,8 @@ public class ClienteService {
         try {
             return Integer.parseInt(parteNumerica);
         } catch (NumberFormatException e) {
-            throw new BusinessException("Formato de código de cliente inválido: '" + codigoCliente + "'. Ejemplo válido: CLI-0001");
+            throw new BusinessException(
+                    "Formato de código de cliente inválido: '" + codigoCliente + "'. Ejemplo válido: CLI-0001");
         }
     }
 
@@ -179,12 +186,14 @@ public class ClienteService {
                 .orElseThrow(() -> new ResourceNotFoundException("Cliente no encontrado con ID: " + idCliente));
     }
 
-    // Busca un responsable extra validando que pertenezca al cliente titular o lanza 404
+    // Busca un responsable extra validando que pertenezca al cliente titular o
+    // lanza 404
     private ResponsableExtra buscarResponsableDeClienteOError(Integer idCliente, Integer idResponsable) {
         return responsableExtraRepository
                 .findByIdResponsableAndClienteIdCliente(idResponsable, idCliente)
                 .orElseThrow(() -> new ResourceNotFoundException(
-                        "No se encontró el responsable extra con ID " + idResponsable + " para el cliente con ID " + idCliente));
+                        "No se encontró el responsable extra con ID " + idResponsable + " para el cliente con ID "
+                                + idCliente));
     }
 
     // Valida que un idUsuario no esté ocupado por un cliente diferente
@@ -194,7 +203,8 @@ public class ClienteService {
         }
         clienteRepository.findByIdUsuario(idUsuario).ifPresent(clienteConUsuario -> {
             if (!clienteConUsuario.getIdCliente().equals(idClienteActual)) {
-                throw new ConflictException("El usuario con ID " + idUsuario + " ya tiene un perfil de cliente asignado");
+                throw new ConflictException(
+                        "El usuario con ID " + idUsuario + " ya tiene un perfil de cliente asignado");
             }
         });
     }
@@ -220,7 +230,8 @@ public class ClienteService {
         responsable.setParentesco(limpiarTextoOpcional(dto.getParentesco()));
     }
 
-    // Unifica la búsqueda por folio (CLI-XXXX), nombre, apellidos y teléfono evitando elementos duplicados
+    // Unifica la búsqueda por folio (CLI-XXXX), nombre, apellidos y teléfono
+    // evitando elementos duplicados
     private List<Cliente> buscarClientesPorTermino(String termino) {
         Map<Integer, Cliente> resultadosUnicos = new LinkedHashMap<>();
 
@@ -244,7 +255,8 @@ public class ClienteService {
         return List.copyOf(resultadosUnicos.values());
     }
 
-    // Convierte una entidad Cliente a ClienteResponseDTO incluyendo su folio CLI-XXXX, responsables y mascotas activas
+    // Convierte una entidad Cliente a ClienteResponseDTO incluyendo su folio
+    // CLI-XXXX, responsables y mascotas activas
     private ClienteResponseDTO mapearAClienteResponseDTO(Cliente cliente) {
         List<ResponsableExtraResponseDTO> responsablesDTO = (cliente.getResponsablesExtra() != null)
                 ? cliente.getResponsablesExtra().stream()
