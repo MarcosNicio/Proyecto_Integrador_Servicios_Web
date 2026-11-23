@@ -265,3 +265,36 @@ Gestiona las cuentas de acceso al sistema (tabla `USUARIOS`).
 |---|---|
 | `findByCorreo(correo)` | Buscar al usuario en el login |
 | `existsByCorreo(correo)` | Evitar correos repetidos en el registro |
+
+### Seguridad (Spring Security)
+
+La configuración está en `common/security/SecurityConfig.java`. Spring Security revisa cada petición **antes** de que llegue a los controladores:
+
+| Regla | Detalle |
+|---|---|
+| Rutas públicas (sin token) | `/api/auth/**` (login y registro) y Swagger (`/swagger-ui/**`, `/v3/api-docs/**`) |
+| Resto de la API | Requiere autenticación |
+| Sesiones | No se usan (*stateless*): cada petición trae su token JWT |
+| CSRF | Desactivado: solo aplica a sesiones con cookies, y aquí el token va en el header |
+| CORS | Activado con `http.cors(...)`, que usa las reglas de `CorsConfig` |
+
+> Por ahora, una ruta privada sin token responde **403** con el formato por defecto de Spring. Cuando se agregue el filtro JWT, responderá **401** con el formato de [Manejo de errores](#manejo-de-errores).
+
+#### Contraseñas con BCrypt
+
+Las contraseñas se cifran con **BCrypt** (bean `PasswordEncoder`) antes de guardarse en `password_hash`:
+
+- **Es de un solo sentido:** del hash no se puede obtener la contraseña original.
+- **Usa una "sal" aleatoria:** la misma contraseña genera un hash distinto cada vez.
+- **En el login no se descifra nada:** `passwordEncoder.matches(contraseñaEscrita, hashGuardado)` compara la contraseña escrita con el hash guardado.
+
+#### Pruebas con rutas protegidas
+
+En los tests de endpoints privados, `@WithMockUser` simula un usuario autenticado:
+
+```java
+@SpringBootTest
+@AutoConfigureMockMvc
+@WithMockUser
+class MiControladorTest { ... }
+```
