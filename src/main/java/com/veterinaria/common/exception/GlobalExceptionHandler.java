@@ -1,5 +1,6 @@
 package com.veterinaria.common.exception;
 
+import com.veterinaria.common.security.SecurityErrorWriter;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolationException;
 import org.slf4j.Logger;
@@ -8,6 +9,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
@@ -137,6 +139,22 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleMethodNotSupported(HttpRequestMethodNotSupportedException ex, HttpServletRequest request) {
         String message = "El método " + ex.getMethod() + " no está permitido en esta ruta";
         return build(HttpStatus.METHOD_NOT_ALLOWED, message, request, null);
+    }
+
+    // ------------------------------------------------------------------
+    // Errores de permisos
+    // ------------------------------------------------------------------
+
+    /**
+     * Un {@code @PreAuthorize} negó el acceso: el usuario está identificado, pero su rol no
+     * tiene permiso. Sin este método, el manejador general lo convertiría en un 500.
+     * <p>
+     * Responde lo mismo que {@code common/security/JwtAccessDeniedHandler}, que cubre las reglas
+     * por ruta de {@code SecurityConfig}.
+     */
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ErrorResponse> handleAccessDenied(AccessDeniedException ex, HttpServletRequest request) {
+        return build(HttpStatus.FORBIDDEN, SecurityErrorWriter.MENSAJE_SIN_PERMISO, request, null);
     }
 
     // ------------------------------------------------------------------

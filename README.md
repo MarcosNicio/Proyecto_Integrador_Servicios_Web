@@ -273,12 +273,62 @@ La configuración está en `common/security/SecurityConfig.java`. Spring Securit
 | Regla | Detalle |
 |---|---|
 | Rutas públicas (sin token) | `/api/auth/**` (login y registro) y Swagger (`/swagger-ui/**`, `/v3/api-docs/**`) |
-| Resto de la API | Requiere autenticación |
+| Resto de la API | Requiere un token JWT válido |
 | Sesiones | No se usan (*stateless*): cada petición trae su token JWT |
 | CSRF | Desactivado: solo aplica a sesiones con cookies, y aquí el token va en el header |
 | CORS | Activado con `http.cors(...)`, que usa las reglas de `CorsConfig` |
 
-> Por ahora, una ruta privada sin token responde **403** con el formato por defecto de Spring. Cuando se agregue el filtro JWT, responderá **401** con el formato de [Manejo de errores](#manejo-de-errores).
+#### Filtro JWT
+
+`common/security/JwtAuthenticationFilter.java` revisa cada petición antes de las reglas anteriores:
+
+1. Lee el header `Authorization: Bearer <token>`.
+2. Valida la firma y la caducidad del token con `JwtUtil`.
+3. Busca al usuario en `USUARIOS` y comprueba que siga **activo**. Si se desactiva a alguien, pierde el acceso de inmediato, sin esperar a que caduque su token.
+4. Registra al usuario con su rol. El rol se toma de la base, no del token, para que un cambio de rol aplique de inmediato.
+
+Si el token falta o falla, el filtro no lanza errores: la petición sigue sin identificar. Si la ruta es pública, funciona normal; si es privada, responde 401.
+
+#### Respuestas 401 y 403
+
+Usan el mismo formato de [Manejo de errores](#manejo-de-errores):
+
+| Código | Significa | Cuándo | `message` |
+|---|---|---|---|
+| **401** | "No sé quién eres" | No se envió token (o falta el prefijo `Bearer `) | `Se requiere iniciar sesión para acceder a este recurso` |
+| **401** | | El token está mal formado, alterado o vencido | `El token es inválido o ha expirado` |
+| **401** | | El usuario del token ya no existe o está desactivado | `El usuario no existe o está desactivado` |
+| **403** | "Sé quién eres, pero no puedes" | El rol del usuario no tiene permiso | `No tienes permiso para acceder a este recurso` |
+
+```json
+{
+  "timestamp": "2026-11-23T10:15:00",
+  "status": 401,
+  "error": "Unauthorized",
+  "message": "El token es inválido o ha expirado",
+  "path": "/api/clientes"
+}
+```
+
+> **Para el frontend:** ante un **401**, borra el token guardado y manda al usuario al login. Ante un **403**, el usuario sí inició sesión, pero no tiene acceso a esa función.
+
+#### Proteger endpoints por rol
+
+Cada módulo protege sus endpoints con `@PreAuthorize` (activado con `@EnableMethodSecurity`):
+
+```java
+@PreAuthorize("hasRole('ADMIN')")
+@DeleteMapping("/{id}")
+public ResponseEntity<Void> eliminar(@PathVariable Integer id) { ... }
+
+@PreAuthorize("hasAnyRole('ADMIN', 'VETERINARIO')")
+@GetMapping("/{id}/expediente")
+public ExpedienteDTO expediente(@PathVariable Integer id) { ... }
+```
+
+Sin `@PreAuthorize`, el endpoint queda disponible para **cualquier usuario que haya iniciado sesión**, con cualquier rol.
+
+Para saber quién hace la petición (por ejemplo, para que un cliente solo vea sus mascotas), recibe `Authentication` en el método del controlador. `authentication.getName()` devuelve el correo del usuario.
 
 #### Contraseñas con BCrypt
 
@@ -290,11 +340,15 @@ Las contraseñas se cifran con **BCrypt** (bean `PasswordEncoder`) antes de guar
 
 #### Pruebas con rutas protegidas
 
-En los tests de endpoints privados, `@WithMockUser` simula un usuario autenticado:
+En los tests de endpoints privados, `@WithMockUser` simula un usuario autenticado, sin necesidad de un token real:
 
 ```java
 @SpringBootTest
 @AutoConfigureMockMvc
-@WithMockUser
+@WithMockUser                       // cualquier usuario identificado
 class MiControladorTest { ... }
+
+@Test
+@WithMockUser(roles = "ADMIN")      // usuario con rol ADMIN
+void adminPuedeEliminar() { ... }
 ```

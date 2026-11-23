@@ -1,14 +1,18 @@
 package com.veterinaria.common.security;
 
+import com.veterinaria.auth.repository.UsuarioRepository;
+import com.veterinaria.common.util.JwtUtil;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.Customizer;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
 /**
  * Configuración de Spring Security: decide qué peticiones pueden llegar a los controladores.
@@ -18,9 +22,12 @@ import org.springframework.security.web.SecurityFilterChain;
  * <ul>
  *   <li><b>Rutas públicas:</b> {@code /api/auth/**} (login y registro) y la documentación de
  *       Swagger. No se puede pedir un token para obtener el token.</li>
- *   <li><b>Todo lo demás requiere autenticación.</b> Por ahora ninguna petición puede
- *       autenticarse; en la Parte 3 el filtro JWT leerá el token del header
- *       {@code Authorization} y dará acceso según el rol.</li>
+ *   <li><b>Todo lo demás requiere autenticación:</b> {@link JwtAuthenticationFilter} lee el token
+ *       del header {@code Authorization} e identifica al usuario con su rol.</li>
+ *   <li><b>Errores con el formato de la API:</b> 401 ({@link JwtAuthenticationEntryPoint}) si no
+ *       se sabe quién es, y 403 ({@link JwtAccessDeniedHandler}) si su rol no tiene permiso.</li>
+ *   <li><b>Roles por endpoint:</b> {@code @EnableMethodSecurity} permite usar
+ *       {@code @PreAuthorize("hasRole('ADMIN')")} en los controladores de cada módulo.</li>
  *   <li><b>Sin sesiones (stateless):</b> con JWT el servidor no guarda sesiones; cada
  *       petición trae su token.</li>
  *   <li><b>CSRF desactivado:</b> CSRF protege sesiones basadas en cookies. Con JWT en el
@@ -32,6 +39,7 @@ import org.springframework.security.web.SecurityFilterChain;
  * </ul>
  */
 @Configuration
+@EnableMethodSecurity
 public class SecurityConfig {
 
     /** Rutas que no requieren token. */
@@ -46,7 +54,11 @@ public class SecurityConfig {
     };
 
     @Bean
-    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {
+    public SecurityFilterChain securityFilterChain(HttpSecurity http,
+                                                   JwtUtil jwtUtil,
+                                                   UsuarioRepository usuarioRepository,
+                                                   JwtAuthenticationEntryPoint authenticationEntryPoint,
+                                                   JwtAccessDeniedHandler accessDeniedHandler) throws Exception {
         http
                 .cors(Customizer.withDefaults())
                 .csrf(AbstractHttpConfigurer::disable)
@@ -55,7 +67,12 @@ public class SecurityConfig {
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(RUTAS_PUBLICAS).permitAll()
-                        .anyRequest().authenticated());
+                        .anyRequest().authenticated())
+                .exceptionHandling(ex -> ex
+                        .authenticationEntryPoint(authenticationEntryPoint)
+                        .accessDeniedHandler(accessDeniedHandler))
+                .addFilterBefore(new JwtAuthenticationFilter(jwtUtil, usuarioRepository),
+                        UsernamePasswordAuthenticationFilter.class);
         return http.build();
     }
 

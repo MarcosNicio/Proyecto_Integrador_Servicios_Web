@@ -14,6 +14,7 @@ import org.springframework.web.bind.annotation.RestController;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
@@ -57,18 +58,21 @@ class SecurityConfigTest {
     }
 
     @Test
-    void rutaPrivadaSinTokenSeRechaza() throws Exception {
-        // Por ahora Spring responde 403 con su formato por defecto. En la Parte 3 se
-        // cambiará a 401 con el formato ErrorResponse, junto con el filtro JWT.
+    void rutaPrivadaSinTokenDevuelve401ConFormatoDeLaApi() throws Exception {
         mockMvc.perform(get("/api/test/privada"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.error").value("Unauthorized"))
+                .andExpect(jsonPath("$.message").value(SecurityErrorWriter.MENSAJE_SIN_TOKEN))
+                .andExpect(jsonPath("$.path").value("/api/test/privada"))
+                .andExpect(jsonPath("$.timestamp").exists());
     }
 
     @Test
     void endpointsDeModulosRequierenAutenticacion() throws Exception {
         // Las rutas reales de los módulos (ej. clientes) también quedan protegidas.
         mockMvc.perform(get("/api/clientes"))
-                .andExpect(status().isForbidden());
+                .andExpect(status().isUnauthorized());
     }
 
     @Test
