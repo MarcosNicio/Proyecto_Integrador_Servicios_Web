@@ -214,3 +214,29 @@ Mascota mascota = mascotaRepository.findById(id)
 | Método HTTP no permitido en la ruta | 405 |
 | La base de datos rechaza el dato (duplicado, llave foránea) | 409 |
 | Error inesperado | 500 con mensaje genérico (el detalle solo se registra en el log) |
+
+## JWT (tokens de autenticación)
+
+La utilidad `common/util/JwtUtil.java` crea y verifica los tokens JWT que el frontend envía en cada petición (`Authorization: Bearer <token>`). Será usada por el módulo `auth` (login y filtro de seguridad).
+
+| Método | Qué hace |
+|---|---|
+| `generarToken(correo, rol)` | Crea un token firmado con el correo, el rol y la fecha de caducidad |
+| `esTokenValido(token)` | Verifica la firma y que no haya caducado |
+| `obtenerCorreo(token)` | Devuelve el correo guardado en el token |
+| `obtenerRol(token)` | Devuelve el rol guardado en el token |
+
+### Configuración
+
+| Propiedad | Variable de entorno | Por defecto |
+|---|---|---|
+| `app.jwt.secret` | `JWT_SECRET` | Clave de desarrollo (**cambiar en producción**) |
+| `app.jwt.expiration-ms` | `JWT_EXPIRATION_MS` | `86400000` (24 horas) |
+
+La clave secreta firma los tokens: quien la conozca puede fabricar tokens válidos, así que en producción debe definirse con `JWT_SECRET` y **nunca subirse al repositorio**. Debe tener al menos 32 caracteres; si es más corta, la aplicación no arranca.
+
+```powershell
+$env:JWT_SECRET = "una-clave-larga-y-aleatoria-de-al-menos-32-caracteres"
+```
+
+> Los datos del token no van cifrados (cualquiera puede leerlos): nunca se guardan contraseñas ni datos sensibles en él.
