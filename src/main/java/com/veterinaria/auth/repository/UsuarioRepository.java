@@ -2,7 +2,6 @@ package com.veterinaria.auth.repository;
 
 import com.veterinaria.auth.entity.Usuario;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
 
 import java.util.Optional;
 
@@ -12,8 +11,10 @@ import java.util.Optional;
  * {@link JpaRepository} ya incluye {@code save}, {@code findById}, {@code findAll},
  * {@code deleteById}, etc. Los métodos de abajo los implementa Spring Data JPA
  * automáticamente a partir de su nombre (no hay que escribir SQL).
+ * <p>
+ * No lleva {@code @Repository}: Spring Data detecta solo las interfaces que extienden
+ * {@link JpaRepository}.
  */
-@Repository
 public interface UsuarioRepository extends JpaRepository<Usuario, Integer> {
 
     /**

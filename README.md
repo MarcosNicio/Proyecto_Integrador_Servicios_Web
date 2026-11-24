@@ -171,6 +171,144 @@ Primero define `DB_PASSWORD` (y `DB_URL` si aplica) como se indica arriba, y lue
 
 La aplicación se levanta en `http://localhost:8080`.
 
+## Pruebas
+
+Hay dos tipos: las **automáticas** (JUnit, se corren con Maven y comprueban todo en unos segundos) y las **manuales** (con la aplicación encendida, desde Swagger o PowerShell).
+
+### Pruebas automáticas
+
+**Requisitos:** la base `veterinaria_db` creada (con sus [migraciones](#actualizar-una-base-existente-migraciones) al día) y PostgreSQL encendido. Las pruebas usan la base real porque Hibernate valida que las entidades coincidan con las tablas.
+
+```powershell
+# Windows (PowerShell)
+$env:DB_PASSWORD = "tu_contraseña"
+
+.\mvnw.cmd test                                                            # todas
+.\mvnw.cmd test "-Dtest=AuthRegistroTest"                                  # una clase
+.\mvnw.cmd test "-Dtest=AuthControllerTest,AuthRegistroTest"               # varias clases
+.\mvnw.cmd test "-Dtest=AuthRegistroTest#correoRepetidoDevuelve409AunqueCambienLasMayusculas"   # una sola prueba
+```
+
+```bash
+# Linux / macOS
+export DB_PASSWORD="tu_contraseña"
+./mvnw test
+./mvnw test -Dtest=AuthRegistroTest
+```
+
+> En PowerShell, `-Dtest=...` va **entre comillas**; sin ellas, PowerShell corta el parámetro.
+
+Si todo sale bien, al final aparece:
+
+```
+[INFO] Tests run: 69, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS
+```
+
+**No dejan basura en la base:** las pruebas que crean usuarios o clientes deshacen sus cambios al terminar. La única consecuencia visible es que los folios (`CLI-XXXX`) pueden saltarse números.
+
+#### Qué prueba cada clase
+
+| Clase | Pruebas | Qué comprueba |
+|---|---|---|
+| `VeterinariaApplicationTests` | 1 | La aplicación arranca y todas las entidades coinciden con la base |
+| `common.config.CorsConfigTest` | 3 | El frontend en React (5173 / 3000) puede consumir la API y otros orígenes no |
+| `common.config.OpenApiConfigTest` | 2 | Swagger UI y la especificación OpenAPI responden |
+| `common.exception.GlobalExceptionHandlerTest` | 11 | Cada tipo de error responde con su código y el formato `ErrorResponse` |
+| `common.util.JwtUtilTest` | 6 | Los tokens se generan, se validan y se rechazan si están alterados o vencidos |
+| `common.security.SecurityConfigTest` | 6 | Rutas públicas y privadas, Swagger público y cifrado BCrypt |
+| `common.security.JwtAuthenticationFilterTest` | 13 | El filtro JWT: token válido, ausente, inventado, falsificado o vencido, usuario desactivado, roles (401/403) |
+| `auth.repository.UsuarioRepositoryTest` | 3 | El repositorio de usuarios contra la base |
+| `auth.controller.AuthControllerTest` | 10 | Login: credenciales correctas e incorrectas, cuenta desactivada, validaciones y uso del token |
+| `auth.controller.AuthRegistroTest` | 13 | Registro: crea usuario y cliente vinculados, contraseña cifrada, token, login posterior, correo repetido y contraseñas débiles |
+| `auth.service.AuthRegistroTransaccionTest` | 1 | Si falla la creación del cliente, tampoco se guarda el usuario |
+
+#### Si algo falla
+
+| Error | Causa probable |
+|---|---|
+| `Connection refused` / `Connection to localhost:5433 refused` | PostgreSQL apagado o en otro puerto: define `DB_URL` (ver [Configurar la conexión](#configurar-la-conexión)) |
+| `password authentication failed for user "postgres"` | `DB_PASSWORD` no está definida o es incorrecta |
+| `Schema-validation: missing table` / `missing column` | La base no está al día: corre las migraciones o vuelve a crear la base |
+| Errores raros después de cambiar de rama | Quedaron clases viejas compiladas: usa `.\mvnw.cmd clean test` |
+
+### Pruebas manuales
+
+Arranca la aplicación (`.\mvnw.cmd spring-boot:run`) y deja esa terminal abierta.
+
+#### Desde Swagger
+
+1. Abre http://localhost:8080/swagger-ui.html
+2. Sección **Autenticación** → `POST /api/auth/login` → **Try it out** → cuerpo `{"correo": "admin@veterinaria.com", "password": "admin123"}` → **Execute**. Copia el `token` de la respuesta.
+3. Botón **Authorize** (arriba a la derecha) → pega el token sin la palabra `Bearer` → **Authorize**.
+4. Prueba cualquier endpoint, por ejemplo `GET /api/clientes`: debe responder **200**. Sin el paso 3 responde **401**.
+5. Para el registro: `POST /api/auth/registro` con los datos de ejemplo que muestra Swagger. Debe responder **201** con el token y el folio del cliente.
+
+#### Desde PowerShell
+
+En **otra** terminal de PowerShell, pega primero esta función. Muestra el código HTTP y la respuesta de cada petición, aunque sea un error:
+
+```powershell
+$api = "http://localhost:8080/api"
+function Invoke-Api($Metodo, $Ruta, $Cuerpo = $null, $Token = $null) {
+    $p = @{ Method = $Metodo; Uri = "$api$Ruta"; ContentType = "application/json"; UseBasicParsing = $true }
+    if ($Cuerpo) { $p.Body = $Cuerpo | ConvertTo-Json }
+    if ($Token)  { $p.Headers = @{ Authorization = "Bearer $Token" } }
+    try   { $r = Invoke-WebRequest @p; [pscustomobject]@{ Codigo = [int]$r.StatusCode; Respuesta = $r.Content | ConvertFrom-Json } }
+    catch { [pscustomobject]@{ Codigo = [int]$_.Exception.Response.StatusCode; Respuesta = $_.ErrorDetails.Message | ConvertFrom-Json } }
+}
+```
+
+Luego prueba cada caso:
+
+```powershell
+# 1. Login del admin → 200
+$login = Invoke-Api POST "/auth/login" @{ correo = "admin@veterinaria.com"; password = "admin123" }
+$login.Codigo
+$token = $login.Respuesta.token
+
+# 2. Ruta privada sin token → 401, con token → 200
+(Invoke-Api GET "/clientes").Codigo
+(Invoke-Api GET "/clientes" -Token $token).Codigo
+
+# 3. Contraseña incorrecta → 401 "Correo o contraseña incorrectos"
+(Invoke-Api POST "/auth/login" @{ correo = "admin@veterinaria.com"; password = "mala" }).Respuesta.message
+
+# 4. Registro de un cliente → 201 con folio CLI-XXXX
+$cliente = @{ correo = "prueba.manual@correo.com"; password = "MiClave123"; nombre = "Prueba"; apellidos = "Manual"; telefono = "5550001111" }
+$reg = Invoke-Api POST "/auth/registro" $cliente
+$reg.Codigo
+$reg.Respuesta.cliente.codigoCliente
+
+# 5. El mismo correo otra vez → 409 "El correo ya está registrado"
+(Invoke-Api POST "/auth/registro" $cliente).Respuesta.message
+
+# 6. Contraseña débil → 400 con el error del campo
+$debil = $cliente.Clone(); $debil.correo = "otro@correo.com"; $debil.password = "Abc1"
+(Invoke-Api POST "/auth/registro" $debil).Respuesta.errors
+
+# 7. El cliente registrado inicia sesión → 200 con rol CLIENTE
+(Invoke-Api POST "/auth/login" @{ correo = "prueba.manual@correo.com"; password = "MiClave123" }).Respuesta.rol
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 1. Login del admin | `200` |
+| 2. Ruta privada | `401` sin token, `200` con token |
+| 3. Contraseña incorrecta | `Correo o contraseña incorrectos` |
+| 4. Registro | `201` y un folio como `CLI-0001` |
+| 5. Correo repetido | `El correo ya está registrado` |
+| 6. Contraseña débil | `password : La contraseña debe tener entre 8 y 72 caracteres` |
+| 7. Login del cliente nuevo | `CLIENTE` |
+
+#### Borrar las cuentas de prueba
+
+Las pruebas manuales **sí guardan datos**. Para borrar una cuenta de prueba (primero su perfil de cliente, después el usuario):
+
+```bash
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM clientes WHERE id_usuario = (SELECT id_usuario FROM usuarios WHERE correo = 'prueba.manual@correo.com'); DELETE FROM usuarios WHERE correo = 'prueba.manual@correo.com';"
+```
+
 ## Documentación de la API (Swagger UI)
 
 Con la aplicación en ejecución:
@@ -296,7 +434,12 @@ $env:JWT_SECRET = "una-clave-larga-y-aleatoria-de-al-menos-32-caracteres"
 
 ## Módulo de autenticación (`auth`)
 
-Gestiona las cuentas de acceso al sistema (tabla `USUARIOS`).
+Gestiona las cuentas de acceso al sistema (tabla `USUARIOS`): inicio de sesión, registro de clientes y protección de la API con JWT.
+
+| Endpoint | Acceso | Qué hace |
+|---|---|---|
+| `POST /api/auth/login` | Público | Inicia sesión y devuelve un token |
+| `POST /api/auth/registro` | Público | Crea la cuenta de un cliente y devuelve un token |
 
 ### Entidad y roles
 
@@ -362,6 +505,69 @@ $r = Invoke-RestMethod -Method Post -Uri http://localhost:8080/api/auth/login `
      -ContentType "application/json" -Body '{"correo":"admin@veterinaria.com","password":"admin123"}'
 Invoke-RestMethod http://localhost:8080/api/clientes -Headers @{ Authorization = "Bearer $($r.token)" }
 ```
+
+### Registro de clientes: `POST /api/auth/registro`
+
+Endpoint público para que el **dueño de la mascota cree su propia cuenta** desde el frontend. El personal de la clínica (veterinarios, cajeros) no se registra aquí: lo da de alta el administrador.
+
+```json
+{
+  "correo": "ana.lopez@correo.com",
+  "password": "MiClave123",
+  "nombre": "Ana",
+  "apellidos": "López Pérez",
+  "telefono": "5551234567",
+  "direccion": "Av. Juárez 123, Centro"
+}
+```
+
+`direccion` es opcional. En **una sola transacción**:
+
+1. Crea el usuario con rol `CLIENTE` (correo en minúsculas, contraseña cifrada con BCrypt).
+2. Crea su perfil en `CLIENTES` con `ClienteService` del módulo de clientes, vinculado por `id_usuario`, con su folio `CLI-XXXX`.
+3. Genera un token, así el cliente queda con la sesión iniciada.
+
+Si falla cualquier paso, no se guarda nada: nunca queda una cuenta sin perfil de cliente, ni al revés.
+
+Responde **201**:
+
+```json
+{
+  "token": "eyJhbGciOiJIUzUxMiJ9...",
+  "tipo": "Bearer",
+  "expiraEnMs": 86400000,
+  "correo": "ana.lopez@correo.com",
+  "rol": "CLIENTE",
+  "cliente": {
+    "idCliente": 1,
+    "codigoCliente": "CLI-0001",
+    "idUsuario": 2,
+    "nombre": "Ana",
+    "apellidos": "López Pérez",
+    "telefono": "5551234567",
+    "direccion": "Av. Juárez 123, Centro",
+    "responsablesExtra": [],
+    "mascotas": []
+  }
+}
+```
+
+| Campo | Regla |
+|---|---|
+| `correo` | Obligatorio, formato de correo, máximo 120 caracteres. Se guarda en minúsculas y sin espacios |
+| `password` | Obligatoria, **de 8 a 72 caracteres, con al menos una letra y un número**. El máximo es 72 porque BCrypt ignora lo que pase de 72 bytes |
+| `nombre`, `apellidos`, `telefono` | Obligatorios; máximo 80, 100 y 20 caracteres (los mismos límites del módulo de clientes) |
+| `direccion` | Opcional, máximo 255 caracteres |
+
+| Caso | Código | `message` |
+|---|---|---|
+| Cuenta creada | **201** | — |
+| Datos inválidos | **400** | `Datos inválidos` (con `errors` por campo) |
+| El correo ya existe (sin importar mayúsculas) | **409** | `El correo ya está registrado` |
+
+> **Pendiente:** si recepción ya dio de alta a un cliente sin cuenta (`POST /api/clientes`) y después ese cliente se registra, quedarían dos perfiles. Más adelante habrá que vincular la cuenta al perfil existente (por ejemplo, buscando por teléfono).
+
+> **Folios:** los números de folio pueden saltarse (por ejemplo, de `CLI-0003` a `CLI-0009`). Es normal: PostgreSQL no reutiliza los ids de registros que se deshicieron, como los de las pruebas automáticas.
 
 ### Seguridad (Spring Security)
 

@@ -2,6 +2,8 @@ package com.veterinaria.auth.controller;
 
 import com.veterinaria.auth.dto.AuthResponse;
 import com.veterinaria.auth.dto.LoginRequest;
+import com.veterinaria.auth.dto.RegistroRequest;
+import com.veterinaria.auth.dto.RegistroResponse;
 import com.veterinaria.auth.service.AuthService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -10,6 +12,7 @@ import io.swagger.v3.oas.annotations.security.SecurityRequirements;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -23,10 +26,25 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/auth")
 @RequiredArgsConstructor
-@Tag(name = "Autenticación", description = "Inicio de sesión y obtención del token JWT")
+@Tag(name = "Autenticación", description = "Inicio de sesión, registro de clientes y obtención del token JWT")
 public class AuthController {
 
     private final AuthService authService;
+
+    @PostMapping("/registro")
+    @SecurityRequirements // Endpoint público: Swagger no le pone el candado del token
+    @Operation(summary = "Registrar un cliente",
+            description = "Crea la cuenta de un cliente (usuario con rol CLIENTE y su perfil con folio CLI-XXXX) "
+                    + "y devuelve un token, así queda con la sesión iniciada. El personal de la clínica no se "
+                    + "registra aquí: lo da de alta el administrador.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Cuenta creada; devuelve el token y el perfil del cliente"),
+            @ApiResponse(responseCode = "400", description = "Datos inválidos (por ejemplo, una contraseña sin número o un correo mal escrito)"),
+            @ApiResponse(responseCode = "409", description = "El correo ya está registrado")
+    })
+    public ResponseEntity<RegistroResponse> registrar(@Valid @RequestBody RegistroRequest request) {
+        return ResponseEntity.status(HttpStatus.CREATED).body(authService.registrar(request));
+    }
 
     @PostMapping("/login")
     @SecurityRequirements // Endpoint público: Swagger no le pone el candado del token
