@@ -88,6 +88,14 @@ public class JwtUtil {
     }
 
     /**
+     * Duración de los tokens en milisegundos ({@code app.jwt.expiration-ms}).
+     * El login la devuelve para que el frontend sepa cuándo pedir que se inicie sesión otra vez.
+     */
+    public long getExpirationMs() {
+        return expirationMs;
+    }
+
+    /**
      * Indica si el token es válido: firma correcta (no fue modificado ni fabricado
      * con otra clave), formato correcto y no ha caducado.
      *

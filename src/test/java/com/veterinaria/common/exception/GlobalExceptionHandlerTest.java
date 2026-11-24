@@ -11,6 +11,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -32,9 +33,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * <p>
  * Usa un controlador de prueba ({@link ErroresController}) que solo existe durante los tests
  * y cuyos endpoints lanzan a propósito cada tipo de error.
+ * <p>
+ * {@code @WithMockUser} simula un usuario autenticado: las rutas de prueba son privadas y aquí
+ * solo interesa el formato de los errores, no la seguridad (eso lo cubre {@code SecurityConfigTest}).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@WithMockUser
 @Import(GlobalExceptionHandlerTest.ErroresController.class)
 class GlobalExceptionHandlerTest {
 

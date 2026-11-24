@@ -405,8 +405,9 @@ INSERT INTO HORARIOS_CLINICA (dia_semana, hora_apertura, hora_cierre, laborable)
 (5, '08:00:00', '20:00:00', TRUE),  -- Viernes
 (6, '08:00:00', '18:00:00', TRUE);  -- Sábado
 
--- Usuario Admin Inicial (hash tomado del documento de especificación)
+-- Usuario Admin Inicial
+-- Contraseña de DESARROLLO: admin123 (hash BCrypt). Cambiarla antes de usar el sistema en producción.
 INSERT INTO USUARIOS (correo, password_hash, rol, activo) VALUES
-('admin@veterinaria.com', '$2a$10$eD8/2Rz89U3N4S/wGf8EreJp7K7M3pQp1uE8yBqYf2O8W3d5yG7i2', 'ADMIN', TRUE);
+('admin@veterinaria.com', '$2a$10$kYmg.vd6XLls/qcLRqYQaOvINqml8sOgqi3U5gIVWBrrocxTvqv9S', 'ADMIN', TRUE);
 
 COMMIT;

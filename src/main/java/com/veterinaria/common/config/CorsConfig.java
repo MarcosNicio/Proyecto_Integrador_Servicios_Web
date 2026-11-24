@@ -23,8 +23,8 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
  *   <li><b>Credenciales:</b> permitidas, para que el navegador pueda enviar datos de autenticación.</li>
  *   <li><b>Cache del preflight:</b> 1 hora, para no repetir la consulta previa en cada petición.</li>
  * </ul>
- * <b>Nota:</b> al agregar Spring Security (módulo auth) habrá que habilitar CORS en la
- * cadena de seguridad ({@code http.cors(...)}) para que estas reglas se sigan aplicando.
+ * <b>Nota:</b> Spring Security aplica estas mismas reglas gracias a {@code http.cors(...)}
+ * en {@code common/security/SecurityConfig}. Si se quita, el navegador bloquearía al frontend.
  */
 @Configuration
 public class CorsConfig implements WebMvcConfigurer {

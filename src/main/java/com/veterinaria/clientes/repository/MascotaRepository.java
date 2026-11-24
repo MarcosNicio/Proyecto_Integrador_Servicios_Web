@@ -2,11 +2,9 @@ package com.veterinaria.clientes.repository;
 
 import com.veterinaria.clientes.entity.Mascota;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
 
 import java.util.List;
 
-@Repository
 public interface MascotaRepository extends JpaRepository<Mascota, Integer> {
 
     // Lista todas las mascotas de un cliente (incluyendo activas e inactivas)
