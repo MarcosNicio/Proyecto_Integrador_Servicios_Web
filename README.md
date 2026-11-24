@@ -70,11 +70,42 @@ psql -U postgres -h localhost -p 5433 -c "DROP DATABASE IF EXISTS veterinaria_db
 
 >  Esto elimina todos los datos de la base.
 
+### Actualizar una base existente (migraciones)
+
+Cuando el script cambia, no hace falta borrar la base: en `database/migraciones/` hay un archivo por cada cambio, que actualiza una base ya creada **sin borrar datos**. Una base creada desde cero con el script actual ya incluye todas las migraciones.
+
+| Migración | Qué agrega | ¿Quién la corre? |
+|---|---|---|
+| `001_catalogos_checks_indices.sql` | Catálogo de consultorios, validaciones `CHECK` e índices | Quien haya creado su base antes del 23/11/2026 |
+
+```bash
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -f database/migraciones/001_catalogos_checks_indices.sql
+```
+
+> Cada migración se corre **una sola vez**. Es todo o nada: si falla, no aplica ningún cambio. Si dice que una restricción "ya existe", esa base ya estaba actualizada.
+
+### Validaciones e índices
+
+Además de las llaves y los `UNIQUE`, la base rechaza datos imposibles aunque el backend no los valide. Por ejemplo:
+
+| Validación | Ejemplo de lo que se rechaza |
+|---|---|
+| Rangos de horas y fechas | Una cita o un horario que termina antes de empezar |
+| Precios, montos y costos | Valores negativos; pagos de 0 |
+| Duraciones, pesos y cantidades | Un servicio de 0 minutos, una tarifa con peso máximo menor al mínimo, una venta de 0 piezas |
+| Stock | Stock negativo |
+| Renglones de una orden de cobro | Un renglón de tipo `SERVICIO` sin servicio, o de producto sin producto |
+
+Si se rompe una validación, PostgreSQL rechaza el dato y la API responde **409** con el formato de [Manejo de errores](#manejo-de-errores). Aun así, cada módulo debe validar sus DTOs para devolver un mensaje claro (400).
+
+También hay **23 índices** en las columnas que más se consultan (las mascotas de un cliente, las citas de un veterinario en un día, las notificaciones pendientes, etc.), porque PostgreSQL no indexa por sí solo las llaves foráneas. Todos se llaman `idx_*`, y las validaciones `chk_*`.
+
 ## Datos iniciales
 
 El script carga:
 
 - 3 tipos de consultorio (Consulta, Cirugía, Estética)
+- 4 consultorios: Consultorio 1, Consultorio 2, Quirófano y Sala de Estética
 - 5 categorías de servicio
 - Horario de la clínica para los 7 días de la semana
 - Usuario administrador: `admin@veterinaria.com`
