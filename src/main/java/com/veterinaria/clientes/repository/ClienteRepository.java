@@ -2,12 +2,10 @@ package com.veterinaria.clientes.repository;
 
 import com.veterinaria.clientes.entity.Cliente;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
 
-@Repository
 public interface ClienteRepository extends JpaRepository<Cliente, Integer> {
 
     // Busca el perfil de cliente vinculado a un ID de usuario del sistema

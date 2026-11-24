@@ -3,12 +3,10 @@ package com.veterinaria.clientes.repository;
 import com.veterinaria.clientes.entity.AntecedenteClinico;
 import com.veterinaria.clientes.entity.TipoAntecedente;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
 
-@Repository
 public interface AntecedenteClinicoRepository extends JpaRepository<AntecedenteClinico, Integer> {
 
     // Lista los antecedentes clínicos de una mascota ordenados del más reciente al más antiguo
