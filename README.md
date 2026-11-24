@@ -77,7 +77,23 @@ El script carga:
 - 3 tipos de consultorio (Consulta, Cirugía, Estética)
 - 5 categorías de servicio
 - Horario de la clínica para los 7 días de la semana
-- Usuario administrador: `admin@veterinaria.com`
+- Usuario administrador para **desarrollo**:
+
+  | Correo | Contraseña |
+  |---|---|
+  | `admin@veterinaria.com` | `admin123` |
+
+  > Cámbiala antes de usar el sistema en producción.
+
+### Si tu base se creó antes del 23/11/2026
+
+La versión anterior del script traía al admin con un hash de ejemplo cuya contraseña nadie conocía, así que no se podía iniciar sesión. Para no recrear la base, actualiza solo ese dato:
+
+```bash
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "UPDATE usuarios SET password_hash = '\$2a\$10\$kYmg.vd6XLls/qcLRqYQaOvINqml8sOgqi3U5gIVWBrrocxTvqv9S' WHERE correo = 'admin@veterinaria.com';"
+```
+
+> En pgAdmin (Query Tool) escribe el hash **sin** las diagonales invertidas: `'$2a$10$kYmg.vd6XLls/qcLRqYQaOvINqml8sOgqi3U5gIVWBrrocxTvqv9S'`.
 
 ## Configurar la conexión
 
@@ -131,7 +147,11 @@ Con la aplicación en ejecución:
 - **Swagger UI:** http://localhost:8080/swagger-ui.html
 - **Especificación OpenAPI (JSON):** http://localhost:8080/v3/api-docs
 
-Para probar endpoints protegidos, usa el botón **Authorize** y pega el token JWT obtenido en el login (sin el prefijo `Bearer`).
+Para probar endpoints protegidos:
+
+1. Ejecuta `POST /api/auth/login` (sección **Autenticación**) con `admin@veterinaria.com` / `admin123`.
+2. Copia el valor de `token` de la respuesta.
+3. Haz clic en **Authorize**, pega el token (sin el prefijo `Bearer`) y acepta. Desde ese momento, Swagger lo envía en cada petición.
 
 ## CORS (conexión con el frontend en React)
 
@@ -198,6 +218,8 @@ En los servicios basta con lanzar la excepción adecuada; el manejador arma la r
 | `ResourceNotFoundException` | 404 | El registro buscado no existe |
 | `BusinessException` | 400 | Se rompe una regla del negocio (ej. cita en fecha pasada) |
 | `ConflictException` | 409 | Choca con datos existentes (ej. correo ya registrado) |
+| `UnauthorizedException` | 401 | No se pudo comprobar quién es el usuario (ej. contraseña incorrecta en el login) |
+| `ForbiddenException` | 403 | Se sabe quién es, pero no puede hacerlo (ej. un cliente que consulta la mascota de otro) |
 
 ```java
 Mascota mascota = mascotaRepository.findById(id)
@@ -265,6 +287,50 @@ Gestiona las cuentas de acceso al sistema (tabla `USUARIOS`).
 |---|---|
 | `findByCorreo(correo)` | Buscar al usuario en el login |
 | `existsByCorreo(correo)` | Evitar correos repetidos en el registro |
+
+### Iniciar sesión: `POST /api/auth/login`
+
+Endpoint público (no pide token). Recibe:
+
+```json
+{ "correo": "admin@veterinaria.com", "password": "admin123" }
+```
+
+Si las credenciales son correctas, responde **200**:
+
+```json
+{
+  "token": "eyJhbGciOiJIUzUxMiJ9...",
+  "tipo": "Bearer",
+  "expiraEnMs": 86400000,
+  "correo": "admin@veterinaria.com",
+  "rol": "ADMIN"
+}
+```
+
+El frontend guarda `token` y lo envía en cada petición como `Authorization: Bearer <token>`. Con `rol` decide qué opciones mostrar, y con `expiraEnMs` sabe cuándo vence la sesión (24 horas por defecto).
+
+| Caso | Código | `message` |
+|---|---|---|
+| Credenciales correctas | **200** | — |
+| Falta el correo o la contraseña, o el correo tiene un formato inválido | **400** | `Datos inválidos` (con `errors` por campo) |
+| El correo no existe **o** la contraseña está mal | **401** | `Correo o contraseña incorrectos` |
+| Credenciales correctas, pero la cuenta está desactivada | **403** | `Tu cuenta está desactivada. Contacta al administrador` |
+
+**Medidas de seguridad** (en `auth/service/AuthService.java`):
+
+- **Mismo mensaje** si el correo no existe o si la contraseña está mal, para no revelar qué correos están registrados.
+- **Mismo tiempo de respuesta** en ambos casos: si el correo no existe, se compara la contraseña contra un hash ficticio, porque BCrypt tarda a propósito y una respuesta más rápida delataría lo mismo que el mensaje.
+- La cuenta desactivada se revisa **después** de la contraseña, para no revelar ese dato a quien no la conoce.
+- El correo se acepta sin importar mayúsculas ni espacios al inicio o al final.
+
+Ejemplo desde PowerShell:
+
+```powershell
+$r = Invoke-RestMethod -Method Post -Uri http://localhost:8080/api/auth/login `
+     -ContentType "application/json" -Body '{"correo":"admin@veterinaria.com","password":"admin123"}'
+Invoke-RestMethod http://localhost:8080/api/clientes -Headers @{ Authorization = "Bearer $($r.token)" }
+```
 
 ### Seguridad (Spring Security)
 

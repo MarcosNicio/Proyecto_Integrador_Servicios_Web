@@ -73,6 +73,18 @@ public class GlobalExceptionHandler {
         return build(HttpStatus.CONFLICT, ex.getMessage(), request, null);
     }
 
+    /** No se pudo comprobar quién es el usuario. Ej.: contraseña incorrecta en el login. */
+    @ExceptionHandler(UnauthorizedException.class)
+    public ResponseEntity<ErrorResponse> handleUnauthorized(UnauthorizedException ex, HttpServletRequest request) {
+        return build(HttpStatus.UNAUTHORIZED, ex.getMessage(), request, null);
+    }
+
+    /** Se sabe quién es el usuario, pero no puede hacer la operación. Ej.: cuenta desactivada. */
+    @ExceptionHandler(ForbiddenException.class)
+    public ResponseEntity<ErrorResponse> handleForbidden(ForbiddenException ex, HttpServletRequest request) {
+        return build(HttpStatus.FORBIDDEN, ex.getMessage(), request, null);
+    }
+
     // ------------------------------------------------------------------
     // Errores en los datos que envía el cliente
     // ------------------------------------------------------------------
