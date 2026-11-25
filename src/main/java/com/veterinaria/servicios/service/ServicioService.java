@@ -3,24 +3,31 @@ package com.veterinaria.servicios.service;
 import com.veterinaria.common.exception.BusinessException;
 import com.veterinaria.common.exception.ConflictException;
 import com.veterinaria.common.exception.ResourceNotFoundException;
+import com.veterinaria.servicios.dto.CalculoPrecioResponseDTO;
 import com.veterinaria.servicios.dto.ServicioRequestDTO;
 import com.veterinaria.servicios.dto.ServicioResponseDTO;
+import com.veterinaria.servicios.dto.TarifaServicioRequestDTO;
 import com.veterinaria.servicios.dto.TarifaServicioResponseDTO;
 import com.veterinaria.servicios.entity.CategoriaServicio;
 import com.veterinaria.servicios.entity.Servicio;
 import com.veterinaria.servicios.entity.TarifaServicio;
 import com.veterinaria.servicios.repository.CategoriaServicioRepository;
 import com.veterinaria.servicios.repository.ServicioRepository;
+import com.veterinaria.servicios.repository.TarifaServicioRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Locale;
+import java.util.Optional;
 
-// Servicio de lógica de negocio para el catálogo de servicios veterinarios (SERVICIOS).
-// Gestiona el CRUD de servicios, la validación de categorías activas, la verificación
-// desacoplada de tipos de consultorio y el soporte de baja lógica/reactivación.
+// Servicio de lógica de negocio para el catálogo de servicios veterinarios (SERVICIOS)
+// y sus reglas tarifarias dinámicas (TARIFAS_SERVICIO).
+// Gestiona el CRUD de servicios, validación de categorías activas, verificación desacoplada
+// de tipos de consultorio, baja lógica/reactivación, administración de tarifas anti-solapamiento
+// y el algoritmo de cálculo dinámico de precio por especie y peso con fallback al precio base.
 @Service
 @RequiredArgsConstructor
 public class ServicioService {
@@ -30,6 +37,9 @@ public class ServicioService {
 
     // Repositorio JPA para validar la existencia y estado de categorías de servicio
     private final CategoriaServicioRepository categoriaServicioRepository;
+
+    // Repositorio JPA para operaciones CRUD, detección de traslapes y cotización sobre tarifas dinámicas
+    private final TarifaServicioRepository tarifaServicioRepository;
 
     // MÉTODOS PÚBLICOS DE NEGOCIO - CATÁLOGO DE SERVICIOS
 
@@ -159,6 +169,137 @@ public class ServicioService {
         return mapearAServicioResponseDTO(servicioReactivado);
     }
 
+    // MÉTODOS PÚBLICOS DE NEGOCIO - TARIFAS DINÁMICAS Y CÁLCULO DE PRECIOS
+
+    // Registra una nueva tarifa diferenciada por especie y rango de peso para un servicio, validando consistencia de pesos y ausencia de traslapes.
+    // Recibe idServicio (identificador del servicio padre) y dto (datos de la tarifa dinámica a registrar).
+    // Retorna el DTO con la información de la tarifa creada.
+    // Lanza ResourceNotFoundException si el servicio no existe, BusinessException si los pesos o el precio son inválidos y ConflictException si el rango se traslapa con una tarifa existente.
+    @Transactional
+    public TarifaServicioResponseDTO crearTarifa(Integer idServicio, TarifaServicioRequestDTO dto) {
+        Servicio servicio = buscarServicioPorIdOError(idServicio);
+        String especieNormalizada = normalizarEspecie(dto.getEspecie());
+        validarDatosTarifa(dto);
+        validarSinTraslape(idServicio, especieNormalizada, dto.getPesoMinKg(), dto.getPesoMaxKg(), null);
+
+        TarifaServicio nuevaTarifa = TarifaServicio.builder()
+                .especie(especieNormalizada)
+                .pesoMinKg(dto.getPesoMinKg())
+                .pesoMaxKg(dto.getPesoMaxKg())
+                .precioCalculado(dto.getPrecioCalculado())
+                .build();
+
+        servicio.agregarTarifa(nuevaTarifa);
+        TarifaServicio tarifaGuardada = tarifaServicioRepository.save(nuevaTarifa);
+        return mapearATarifaResponseDTO(tarifaGuardada);
+    }
+
+    // Lista las tarifas dinámicas configuradas para un servicio, con filtro opcional por especie ordenadas por especie y peso mínimo.
+    // Recibe idServicio (identificador del servicio) y especie (especie opcional para filtrar, puede ser null).
+    // Retorna la lista ordenada de tarifas mapeadas a DTO de respuesta.
+    // Lanza ResourceNotFoundException si el servicio no existe.
+    @Transactional(readOnly = true)
+    public List<TarifaServicioResponseDTO> listarTarifasPorServicio(Integer idServicio, String especie) {
+        buscarServicioPorIdOError(idServicio);
+        String especieFiltro = normalizarTextoOpcional(especie);
+
+        List<TarifaServicio> tarifas = (especieFiltro != null)
+                ? tarifaServicioRepository.findByServicioIdServicioAndEspecieIgnoreCaseOrderByPesoMinKgAsc(
+                        idServicio, especieFiltro)
+                : tarifaServicioRepository.findByServicioIdServicioOrderByEspecieAscPesoMinKgAsc(idServicio);
+
+        return tarifas.stream()
+                .map(this::mapearATarifaResponseDTO)
+                .toList();
+    }
+
+    // Actualiza una tarifa dinámica existente perteneciente a un servicio, validando consistencia de pesos y ausencia de traslapes con otras tarifas.
+    // Recibe idServicio (identificador del servicio padre), idTarifa (identificador de la tarifa a actualizar) y dto (nuevos datos de la tarifa).
+    // Retorna el DTO con la tarifa actualizada.
+    // Lanza ResourceNotFoundException si el servicio o la tarifa no existen o no están asociados, BusinessException si los pesos o el precio son inválidos y ConflictException si el nuevo rango se traslapa con otra tarifa.
+    @Transactional
+    public TarifaServicioResponseDTO actualizarTarifa(
+            Integer idServicio,
+            Integer idTarifa,
+            TarifaServicioRequestDTO dto
+    ) {
+        TarifaServicio tarifaExistente = buscarTarifaDeServicioOError(idServicio, idTarifa);
+        String especieNormalizada = normalizarEspecie(dto.getEspecie());
+        validarDatosTarifa(dto);
+        validarSinTraslape(idServicio, especieNormalizada, dto.getPesoMinKg(), dto.getPesoMaxKg(), idTarifa);
+
+        tarifaExistente.setEspecie(especieNormalizada);
+        tarifaExistente.setPesoMinKg(dto.getPesoMinKg());
+        tarifaExistente.setPesoMaxKg(dto.getPesoMaxKg());
+        tarifaExistente.setPrecioCalculado(dto.getPrecioCalculado());
+
+        TarifaServicio tarifaActualizada = tarifaServicioRepository.save(tarifaExistente);
+        return mapearATarifaResponseDTO(tarifaActualizada);
+    }
+
+    // Elimina permanentemente una tarifa dinámica asociada a un servicio manteniendo sincronizada la relación en memoria.
+    // Recibe idServicio (identificador del servicio padre) e idTarifa (identificador de la tarifa a eliminar). No retorna valor.
+    // Lanza ResourceNotFoundException si el servicio o la tarifa no existen o la tarifa no pertenece a ese servicio.
+    @Transactional
+    public void eliminarTarifa(Integer idServicio, Integer idTarifa) {
+        TarifaServicio tarifa = buscarTarifaDeServicioOError(idServicio, idTarifa);
+        Servicio servicio = tarifa.getServicio();
+        if (servicio != null) {
+            servicio.eliminarTarifa(tarifa);
+        }
+        tarifaServicioRepository.delete(tarifa);
+    }
+
+    // Calcula el precio dinámico de un servicio activo según especie y peso en kilogramos, aplicando fallback automático al precio base si ninguna tarifa coincide.
+    // Recibe idServicio (identificador del servicio a cotizar), especie (especie de la mascota) y pesoKg (peso de la mascota en kilogramos).
+    // Retorna el DTO con el detalle de la cotización, precio final e indicador tarifaAplicada.
+    // Lanza ResourceNotFoundException si el servicio no existe y BusinessException si el servicio está inactivo, la especie es inválida o el peso es menor o igual a 0.
+    @Transactional(readOnly = true)
+    public CalculoPrecioResponseDTO calcularPrecio(Integer idServicio, String especie, BigDecimal pesoKg) {
+        Servicio servicio = buscarServicioPorIdOError(idServicio);
+
+        if (!Boolean.TRUE.equals(servicio.getActivo())) {
+            throw new BusinessException(
+                    "No se puede cotizar el servicio con ID " + idServicio + " porque se encuentra inactivo");
+        }
+
+        String especieNormalizada = normalizarEspecie(especie);
+        if (pesoKg == null || pesoKg.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new BusinessException("El peso en kilogramos debe ser mayor a 0 para calcular el precio");
+        }
+
+        Optional<TarifaServicio> tarifaAplicable = tarifaServicioRepository.findTarifaAplicable(
+                idServicio, especieNormalizada, pesoKg);
+
+        if (tarifaAplicable.isPresent()) {
+            TarifaServicio tarifa = tarifaAplicable.get();
+            String rango = tarifa.getPesoMinKg() + " kg - " + tarifa.getPesoMaxKg() + " kg";
+            return CalculoPrecioResponseDTO.builder()
+                    .idServicio(servicio.getIdServicio())
+                    .nombreServicio(servicio.getNombre())
+                    .especie(especieNormalizada)
+                    .pesoKg(pesoKg)
+                    .precioBase(servicio.getPrecioBase())
+                    .precioFinal(tarifa.getPrecioCalculado())
+                    .tarifaAplicada(true)
+                    .idTarifaAplicada(tarifa.getIdTarifa())
+                    .rangoAplicado(rango)
+                    .build();
+        }
+
+        return CalculoPrecioResponseDTO.builder()
+                .idServicio(servicio.getIdServicio())
+                .nombreServicio(servicio.getNombre())
+                .especie(especieNormalizada)
+                .pesoKg(pesoKg)
+                .precioBase(servicio.getPrecioBase())
+                .precioFinal(servicio.getPrecioBase())
+                .tarifaAplicada(false)
+                .idTarifaAplicada(null)
+                .rangoAplicado(null)
+                .build();
+    }
+
     // MÉTODOS AUXILIARES PRIVADOS
 
     // Busca un servicio por su ID o lanza error si no existe.
@@ -263,6 +404,74 @@ public class ServicioService {
                 .activo(servicio.getActivo())
                 .tarifas(tarifasDTO)
                 .build();
+    }
+
+    // Busca una tarifa por su ID verificando previamente que el servicio exista y que la tarifa pertenezca a dicho servicio.
+    // Recibe idServicio (identificador del servicio padre) e idTarifa (identificador de la tarifa).
+    // Retorna la entidad TarifaServicio encontrada y validada.
+    // Lanza ResourceNotFoundException si el servicio o la tarifa no existen o no corresponden entre sí.
+    private TarifaServicio buscarTarifaDeServicioOError(Integer idServicio, Integer idTarifa) {
+        buscarServicioPorIdOError(idServicio);
+
+        TarifaServicio tarifa = tarifaServicioRepository.findById(idTarifa)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "No se encontró la tarifa de servicio con ID: " + idTarifa));
+
+        if (tarifa.getServicio() == null || !idServicio.equals(tarifa.getServicio().getIdServicio())) {
+            throw new ResourceNotFoundException(
+                    "La tarifa con ID " + idTarifa + " no pertenece al servicio con ID: " + idServicio);
+        }
+        return tarifa;
+    }
+
+    // Valida las reglas de dominio de pesos y precio para una tarifa dinámica (pesoMinKg >= 0, pesoMaxKg > pesoMinKg y precioCalculado >= 0).
+    // Recibe dto con los valores numéricos de la tarifa a validar. No retorna valor.
+    // Lanza BusinessException si algún valor incumple las restricciones de rango o negatividad.
+    private void validarDatosTarifa(TarifaServicioRequestDTO dto) {
+        if (dto.getPesoMinKg() == null || dto.getPesoMaxKg() == null || dto.getPrecioCalculado() == null) {
+            throw new BusinessException("Los pesos mínimo y máximo, así como el precio calculado, son obligatorios");
+        }
+        if (dto.getPesoMinKg().compareTo(BigDecimal.ZERO) < 0) {
+            throw new BusinessException("El peso mínimo en kg no puede ser negativo");
+        }
+        if (dto.getPesoMaxKg().compareTo(dto.getPesoMinKg()) <= 0) {
+            throw new BusinessException("El peso máximo debe ser estrictamente mayor al peso mínimo");
+        }
+        if (dto.getPrecioCalculado().compareTo(BigDecimal.ZERO) < 0) {
+            throw new BusinessException("El precio calculado no puede ser negativo");
+        }
+    }
+
+    // Verifica que el rango de peso indicado no se traslape con otra tarifa existente para el mismo servicio y especie.
+    // Recibe idServicio (identificador del servicio), especie (especie normalizada), pesoMinKg (límite inferior), pesoMaxKg (límite superior) e idTarifaExcluir (ID de tarifa a excluir en actualización, o null al crear). No retorna valor.
+    // Lanza ConflictException si se detecta un solapamiento de rangos.
+    private void validarSinTraslape(
+            Integer idServicio,
+            String especie,
+            BigDecimal pesoMinKg,
+            BigDecimal pesoMaxKg,
+            Integer idTarifaExcluir
+    ) {
+        boolean hayTraslape = tarifaServicioRepository.existeTraslape(
+                idServicio, especie, pesoMinKg, pesoMaxKg, idTarifaExcluir);
+
+        if (hayTraslape) {
+            throw new ConflictException(
+                    "El rango de peso (" + pesoMinKg + " kg - " + pesoMaxKg + " kg) para la especie '"
+                            + especie + "' se traslapa con una tarifa existente en este servicio");
+        }
+    }
+
+    // Valida que el texto de especie no sea nulo ni esté en blanco y lo normaliza recortando espacios y convirtiéndolo a mayúsculas.
+    // Recibe especie con el nombre de la especie a normalizar.
+    // Retorna la especie normalizada en mayúsculas sin espacios extremos.
+    // Lanza BusinessException si la especie es nula o está vacía.
+    private String normalizarEspecie(String especie) {
+        String recortada = normalizarTextoOpcional(especie);
+        if (recortada == null) {
+            throw new BusinessException("La especie es obligatoria");
+        }
+        return recortada.toUpperCase(Locale.ROOT);
     }
 
     // Mapea una entidad TarifaServicio a su representación DTO de respuesta.
