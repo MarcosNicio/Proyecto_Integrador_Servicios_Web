@@ -15,6 +15,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
@@ -41,10 +42,12 @@ public class MascotaController {
 
     //Registrar una nueva mascota
     @PostMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Registrar una nueva mascota", description = "Crea el perfil de una mascota vinculada a un cliente y genera su folio clínico (ej. PAC-0001)")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Mascota registrada exitosamente"),
             @ApiResponse(responseCode = "400", description = "Datos de la mascota inválidos"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para registrar mascotas en otro cliente"),
             @ApiResponse(responseCode = "404", description = "Cliente propietario no encontrado")
     })
     public ResponseEntity<MascotaResponseDTO> crearMascota(@Valid @RequestBody MascotaRequestDTO dto) {
@@ -55,8 +58,12 @@ public class MascotaController {
 
     //Listar o buscar mascotas activas
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO')")
     @Operation(summary = "Directorio de mascotas activas", description = "Lista todas las mascotas activas o busca por nombre o folio del carnet digital (PAC-XXXX)")
-    @ApiResponse(responseCode = "200", description = "Lista de mascotas obtenida correctamente")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Lista de mascotas obtenida correctamente"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para consultar el directorio global de mascotas")
+    })
     public ResponseEntity<List<MascotaResponseDTO>> listarMascotasActivas(
             @Parameter(description = "Nombre de la mascota o folio clínico (ej. Firulais o PAC-0001)", example = "Firulais")
             @RequestParam(required = false) String busqueda) {
@@ -66,9 +73,11 @@ public class MascotaController {
 
     //Obtener mascota por ID
     @GetMapping("/{idMascota}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Obtener mascota por ID", description = "Consulta el perfil completo de la mascota y sus antecedentes clínicos")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Mascota encontrada"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para consultar mascotas de otro cliente"),
             @ApiResponse(responseCode = "404", description = "Mascota no encontrada")
     })
     public ResponseEntity<MascotaResponseDTO> obtenerPorId(
@@ -80,10 +89,12 @@ public class MascotaController {
 
     //Obtener mascota por folio clínico
     @GetMapping("/codigo/{codigoMascota}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Obtener mascota por folio clínico (Carnet Digital)", description = "Consulta el perfil de la mascota usando el folio de su carnet digital (ej. PAC-0001)")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Mascota encontrada"),
             @ApiResponse(responseCode = "400", description = "Formato de folio inválido"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para consultar mascotas de otro cliente"),
             @ApiResponse(responseCode = "404", description = "Mascota no encontrada")
     })
     public ResponseEntity<MascotaResponseDTO> obtenerPorCodigo(
@@ -95,9 +106,11 @@ public class MascotaController {
 
     //Listar mascotas activas de un cliente
     @GetMapping("/cliente/{idCliente}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Listar mascotas activas de un cliente", description = "Obtiene todas las mascotas activas asociadas a un cliente específico")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Lista de mascotas del cliente obtenida"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para consultar las mascotas de otro cliente"),
             @ApiResponse(responseCode = "404", description = "Cliente propietario no encontrado")
     })
     public ResponseEntity<List<MascotaResponseDTO>> listarPorCliente(
@@ -109,10 +122,12 @@ public class MascotaController {
 
     //Actualizar perfil de una mascota
     @PutMapping("/{idMascota}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Actualizar perfil de una mascota", description = "Modifica datos biométricos, peso actual, estado de esterilización o fotografía de la mascota")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Mascota actualizada exitosamente"),
             @ApiResponse(responseCode = "400", description = "Datos de entrada inválidos"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para modificar mascotas de otro cliente"),
             @ApiResponse(responseCode = "404", description = "Mascota o cliente propietario no encontrado")
     })
     public ResponseEntity<MascotaResponseDTO> actualizarMascota(
@@ -125,9 +140,11 @@ public class MascotaController {
 
     //Desactivar una mascota
     @PatchMapping("/{idMascota}/desactivar")
+    @PreAuthorize("hasAnyRole('ADMIN', 'VETERINARIO')")
     @Operation(summary = "Dar de baja lógica a una mascota", description = "Marca la mascota como inactiva (activo = false) conservando su historial clínico y de citas")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Mascota dada de baja correctamente"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para dar de baja expedientes de mascotas"),
             @ApiResponse(responseCode = "404", description = "Mascota no encontrada")
     })
     public ResponseEntity<Void> desactivarMascota(
@@ -140,9 +157,11 @@ public class MascotaController {
 
     //Reactivar una mascota
     @PatchMapping("/{idMascota}/reactivar")
+    @PreAuthorize("hasAnyRole('ADMIN', 'VETERINARIO')")
     @Operation(summary = "Reactivar una mascota dada de baja", description = "Restaura el estado activo (activo = true) de una mascota previamente desactivada")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Mascota reactivada exitosamente"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para reactivar expedientes de mascotas"),
             @ApiResponse(responseCode = "404", description = "Mascota no encontrada")
     })
     public ResponseEntity<MascotaResponseDTO> reactivarMascota(
@@ -156,10 +175,12 @@ public class MascotaController {
 
     //Registrar antecedente clínico
     @PostMapping("/{idMascota}/antecedentes")
+    @PreAuthorize("hasAnyRole('ADMIN', 'VETERINARIO')")
     @Operation(summary = "Registrar antecedente clínico", description = "Agrega una alergia, enfermedad crónica o cirugía previa al expediente de la mascota")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Antecedente clínico registrado exitosamente"),
             @ApiResponse(responseCode = "400", description = "Datos del antecedente inválidos"),
+            @ApiResponse(responseCode = "403", description = "Solo ADMIN o VETERINARIO pueden registrar antecedentes clínicos"),
             @ApiResponse(responseCode = "404", description = "Mascota no encontrada")
     })
     public ResponseEntity<AntecedenteClinicoResponseDTO> agregarAntecedente(
@@ -173,9 +194,11 @@ public class MascotaController {
 
     //Listar antecedentes clínicos de una mascota
     @GetMapping("/{idMascota}/antecedentes")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Listar antecedentes clínicos de una mascota", description = "Consulta el historial de antecedentes ordenado por fecha o filtrado por tipo (ej. ALERGIA)")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Lista de antecedentes obtenida correctamente"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para consultar antecedentes de mascotas de otro cliente"),
             @ApiResponse(responseCode = "404", description = "Mascota no encontrada")
     })
     public ResponseEntity<List<AntecedenteClinicoResponseDTO>> listarAntecedentes(
@@ -189,10 +212,12 @@ public class MascotaController {
 
     //Actualizar antecedente clínico
     @PutMapping("/{idMascota}/antecedentes/{idAntecedente}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'VETERINARIO')")
     @Operation(summary = "Actualizar antecedente clínico", description = "Modifica el tipo, descripción o fecha de registro de un antecedente clínico de la mascota")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Antecedente actualizado correctamente"),
             @ApiResponse(responseCode = "400", description = "Datos inválidos"),
+            @ApiResponse(responseCode = "403", description = "Solo ADMIN o VETERINARIO pueden modificar antecedentes clínicos"),
             @ApiResponse(responseCode = "404", description = "Antecedente o mascota no encontrada")
     })
     public ResponseEntity<AntecedenteClinicoResponseDTO> actualizarAntecedente(
@@ -207,9 +232,11 @@ public class MascotaController {
 
     //Eliminar antecedente clínico
     @DeleteMapping("/{idMascota}/antecedentes/{idAntecedente}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'VETERINARIO')")
     @Operation(summary = "Eliminar antecedente clínico", description = "Elimina un antecedente clínico registrado en la mascota")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Antecedente eliminado exitosamente"),
+            @ApiResponse(responseCode = "403", description = "Solo ADMIN o VETERINARIO pueden eliminar antecedentes clínicos"),
             @ApiResponse(responseCode = "404", description = "Antecedente o mascota no encontrada")
     })
     public ResponseEntity<Void> eliminarAntecedente(

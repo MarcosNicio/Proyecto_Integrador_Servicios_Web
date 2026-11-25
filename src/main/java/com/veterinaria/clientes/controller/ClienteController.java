@@ -14,6 +14,7 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -39,10 +40,12 @@ public class ClienteController {
 
     //Registrar un nuevo cliente
     @PostMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO')")
     @Operation(summary = "Registrar un nuevo cliente", description = "Crea el perfil de un cliente y genera su folio de negocio (ej. CLI-0001)")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Cliente registrado exitosamente"),
             @ApiResponse(responseCode = "400", description = "Datos de entrada inválidos"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para registrar clientes en mostrador"),
             @ApiResponse(responseCode = "409", description = "El ID de usuario ya está vinculado a otro cliente")
     })
     public ResponseEntity<ClienteResponseDTO> crearCliente(@Valid @RequestBody ClienteRequestDTO dto) {
@@ -53,8 +56,12 @@ public class ClienteController {
 
     //Listar o buscar clientes
     @GetMapping
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO')")
     @Operation(summary = "Listar o buscar clientes", description = "Lista todos los clientes o filtra por folio (CLI-XXXX), nombre, apellidos o teléfono")
-    @ApiResponse(responseCode = "200", description = "Lista de clientes obtenida correctamente")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Lista de clientes obtenida correctamente"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para consultar el directorio global de clientes")
+    })
     public ResponseEntity<List<ClienteResponseDTO>> listarClientes(
             @Parameter(description = "Término opcional de búsqueda (folio CLI-0001, nombre, apellido o teléfono)", example = "Gómez")
             @RequestParam(required = false) String filtro) {
@@ -64,9 +71,11 @@ public class ClienteController {
 
     //Obtener cliente por ID
     @GetMapping("/{idCliente}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Obtener cliente por ID", description = "Consulta el detalle de un cliente, sus contactos de emergencia y mascotas activas")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Cliente encontrado"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para consultar el perfil de otro cliente"),
             @ApiResponse(responseCode = "404", description = "Cliente no encontrado")
     })
     public ResponseEntity<ClienteResponseDTO> obtenerPorId(
@@ -78,10 +87,12 @@ public class ClienteController {
 
     //Obtener cliente por folio de negocio
     @GetMapping("/codigo/{codigoCliente}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Obtener cliente por folio de negocio", description = "Consulta el perfil de un cliente mediante su folio legible (ej. CLI-0001)")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Cliente encontrado"),
             @ApiResponse(responseCode = "400", description = "Formato de folio inválido"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para consultar el perfil de otro cliente"),
             @ApiResponse(responseCode = "404", description = "Cliente no encontrado")
     })
     public ResponseEntity<ClienteResponseDTO> obtenerPorCodigo(
@@ -93,9 +104,11 @@ public class ClienteController {
 
     //Obtener cliente por ID de usuario
     @GetMapping("/usuario/{idUsuario}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Obtener cliente por ID de usuario", description = "Obtiene el perfil del cliente vinculado a una cuenta de usuario del sistema")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Perfil de cliente encontrado"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para consultar el perfil de otro usuario"),
             @ApiResponse(responseCode = "404", description = "No existe perfil de cliente para el usuario indicado")
     })
     public ResponseEntity<ClienteResponseDTO> obtenerPorIdUsuario(
@@ -107,10 +120,12 @@ public class ClienteController {
 
     //Actualizar datos de un cliente
     @PutMapping("/{idCliente}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Actualizar datos de un cliente", description = "Modifica la información de contacto, dirección o carta responsiva de un cliente")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Cliente actualizado correctamente"),
             @ApiResponse(responseCode = "400", description = "Datos de entrada inválidos"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para modificar el perfil de otro cliente"),
             @ApiResponse(responseCode = "404", description = "Cliente no encontrado"),
             @ApiResponse(responseCode = "409", description = "El ID de usuario ya pertenece a otro cliente")
     })
@@ -126,10 +141,12 @@ public class ClienteController {
 
     //Registrar un responsable extra
     @PostMapping("/{idCliente}/responsables")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Agregar contacto de emergencia", description = "Registra un responsable adicional o contacto de emergencia asociado al cliente")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Contacto registrado exitosamente"),
             @ApiResponse(responseCode = "400", description = "Datos del contacto inválidos"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para modificar contactos de otro cliente"),
             @ApiResponse(responseCode = "404", description = "Cliente titular no encontrado")
     })
     public ResponseEntity<ResponsableExtraResponseDTO> agregarResponsableExtra(
@@ -143,9 +160,11 @@ public class ClienteController {
 
     //Listar responsables extra
     @GetMapping("/{idCliente}/responsables")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Listar contactos de emergencia del cliente", description = "Obtiene todos los responsables adicionales registrados para un cliente")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Lista de contactos obtenida"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para consultar contactos de otro cliente"),
             @ApiResponse(responseCode = "404", description = "Cliente titular no encontrado")
     })
     public ResponseEntity<List<ResponsableExtraResponseDTO>> listarResponsablesExtra(
@@ -157,10 +176,12 @@ public class ClienteController {
 
     //Actualizar contacto de emergencia
     @PutMapping("/{idCliente}/responsables/{idResponsable}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Actualizar contacto de emergencia", description = "Modifica el nombre, teléfono o parentesco de un contacto adicional del cliente")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "Contacto actualizado correctamente"),
             @ApiResponse(responseCode = "400", description = "Datos inválidos"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para modificar contactos de otro cliente"),
             @ApiResponse(responseCode = "404", description = "Contacto o cliente no encontrado")
     })
     public ResponseEntity<ResponsableExtraResponseDTO> actualizarResponsableExtra(
@@ -175,9 +196,11 @@ public class ClienteController {
 
     //Eliminar contacto de emergencia
     @DeleteMapping("/{idCliente}/responsables/{idResponsable}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO', 'VETERINARIO', 'CLIENTE')")
     @Operation(summary = "Eliminar contacto de emergencia", description = "Elimina un contacto adicional asociado al cliente")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Contacto eliminado exitosamente"),
+            @ApiResponse(responseCode = "403", description = "Sin permisos para eliminar contactos de otro cliente"),
             @ApiResponse(responseCode = "404", description = "Contacto o cliente no encontrado")
     })
     public ResponseEntity<Void> eliminarResponsableExtra(

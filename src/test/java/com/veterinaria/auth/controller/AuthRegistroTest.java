@@ -94,9 +94,12 @@ class AuthRegistroTest {
     @Test
     void elTokenDelRegistroDaAccesoAUnaRutaPrivada() throws Exception {
         String token = extraerToken(mockMvc.perform(registro(CORREO, PASSWORD)).andReturn());
+        Integer idUsuario = usuarioRepository.findByCorreo(CORREO).orElseThrow().getIdUsuario();
 
-        mockMvc.perform(get("/api/clientes").header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
-                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/clientes/usuario/" + idUsuario)
+                        .header(HttpHeaders.AUTHORIZATION, "Bearer " + token))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.idUsuario").value(idUsuario));
     }
 
     @Test
