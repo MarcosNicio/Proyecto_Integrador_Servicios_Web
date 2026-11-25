@@ -301,12 +301,98 @@ $debil = $cliente.Clone(); $debil.correo = "otro@correo.com"; $debil.password = 
 | 6. Contraseña débil | `password : La contraseña debe tener entre 8 y 72 caracteres` |
 | 7. Login del cliente nuevo | `CLIENTE` |
 
+#### Roles y pertenencia (módulo de clientes)
+
+Comprueba los [permisos del módulo de clientes](#permisos-del-módulo-de-clientes): un CLIENTE solo puede ver y modificar **lo suyo**, y cada rol del personal solo lo que le corresponde. Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1.
+
+Primero crea a los participantes: dos clientes (Ana y Beto), una mascota para cada uno y un cajero.
+
+```powershell
+# Dos clientes registrados → cada uno con su token y su perfil
+$ana  = (Invoke-Api POST "/auth/registro" @{ correo = "ana.roles@correo.com";  password = "MiClave123"; nombre = "Ana";  apellidos = "Roles"; telefono = "5550002222" }).Respuesta
+$beto = (Invoke-Api POST "/auth/registro" @{ correo = "beto.roles@correo.com"; password = "MiClave123"; nombre = "Beto"; apellidos = "Roles"; telefono = "5550003333" }).Respuesta
+$tAna = $ana.token
+$idAna = $ana.cliente.idCliente;  $idBeto = $beto.cliente.idCliente
+
+# Una mascota para cada uno (Ana registra la suya, el admin la de Beto)
+$mAna  = (Invoke-Api POST "/mascotas" @{ idCliente = $idAna;  nombre = "Firulais"; especie = "Perro"; sexo = "MACHO" } $tAna).Respuesta.idMascota
+$mBeto = (Invoke-Api POST "/mascotas" @{ idCliente = $idBeto; nombre = "Michi";    especie = "Gato";  sexo = "HEMBRA" } $token).Respuesta.idMascota
+```
+
+El registro público solo crea clientes. El cajero se crea directo en la base, con la misma contraseña que el admin (`admin123`). Esta línea va en la terminal de **psql**, no en PowerShell:
+
+```sql
+INSERT INTO usuarios (correo, password_hash, rol, activo)
+SELECT 'cajero.roles@correo.com', password_hash, 'CAJERO', true FROM usuarios WHERE correo = 'admin@veterinaria.com';
+```
+
+```powershell
+$tCajero = (Invoke-Api POST "/auth/login" @{ correo = "cajero.roles@correo.com"; password = "admin123" }).Respuesta.token
+```
+
+Ahora prueba cada caso. Todos muestran solo el código HTTP:
+
+```powershell
+# 8. Ana consulta lo suyo → 200
+(Invoke-Api GET "/clientes/$idAna" -Token $tAna).Codigo
+(Invoke-Api GET "/clientes/usuario/$($ana.cliente.idUsuario)" -Token $tAna).Codigo
+(Invoke-Api GET "/mascotas/$mAna" -Token $tAna).Codigo
+(Invoke-Api GET "/mascotas/$mAna/antecedentes" -Token $tAna).Codigo
+
+# 9. Ana intenta ver o modificar lo de Beto → 403
+(Invoke-Api GET "/clientes/$idBeto" -Token $tAna).Codigo
+(Invoke-Api GET "/clientes/codigo/$($beto.cliente.codigoCliente)" -Token $tAna).Codigo
+(Invoke-Api PUT "/clientes/$idBeto" @{ nombre = "X"; apellidos = "X"; telefono = "5550000000" } $tAna).Codigo
+(Invoke-Api GET "/mascotas/$mBeto" -Token $tAna).Codigo
+(Invoke-Api GET "/mascotas/cliente/$idBeto" -Token $tAna).Codigo
+
+# 10. Ana intenta pasarle su mascota a Beto → 403
+(Invoke-Api PUT "/mascotas/$mAna" @{ idCliente = $idBeto; nombre = "Firulais"; especie = "Perro"; sexo = "MACHO" } $tAna).Codigo
+
+# 11. Ana intenta quedarse con la cuenta de Beto (cambiando el idUsuario de su perfil) → 403
+(Invoke-Api PUT "/clientes/$idAna" @{ idUsuario = $beto.cliente.idUsuario; nombre = "Ana"; apellidos = "Roles"; telefono = "5550002222" } $tAna).Codigo
+
+# 12. Ana en funciones del personal → 403
+(Invoke-Api GET "/clientes" -Token $tAna).Codigo
+(Invoke-Api PATCH "/mascotas/$mAna/desactivar" -Token $tAna).Codigo
+(Invoke-Api POST "/mascotas/$mAna/antecedentes" @{ tipo = "ALERGIA"; descripcion = "Polen" } $tAna).Codigo
+
+# 13. El cajero ve a cualquier cliente → 200, pero no toca lo clínico → 403
+(Invoke-Api GET "/clientes" -Token $tCajero).Codigo
+(Invoke-Api GET "/clientes/$idBeto" -Token $tCajero).Codigo
+(Invoke-Api POST "/mascotas/$mBeto/antecedentes" @{ tipo = "ALERGIA"; descripcion = "Polen" } $tCajero).Codigo
+(Invoke-Api PATCH "/mascotas/$mBeto/desactivar" -Token $tCajero).Codigo
+
+# 14. El admin registra el antecedente → 201
+(Invoke-Api POST "/mascotas/$mBeto/antecedentes" @{ tipo = "ALERGIA"; descripcion = "Penicilina" } $token).Codigo
+
+# 15. Mensaje del 403
+(Invoke-Api GET "/clientes/$idBeto" -Token $tAna).Respuesta.message
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 8. Ana consulta lo suyo | `200` en las 4 |
+| 9. Ana con lo de Beto | `403` en las 5 |
+| 10. Pasar su mascota a otro cliente | `403` |
+| 11. Cambiar la cuenta vinculada a su perfil | `403` |
+| 12. Ana en funciones del personal | `403` en las 3 |
+| 13. Cajero | `200`, `200`, `403`, `403` |
+| 14. Admin crea un antecedente | `201` |
+| 15. Mensaje | `No tienes permiso para acceder o modificar la información de otro cliente` |
+
 #### Borrar las cuentas de prueba
 
 Las pruebas manuales **sí guardan datos**. Para borrar una cuenta de prueba (primero su perfil de cliente, después el usuario):
 
 ```bash
 psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM clientes WHERE id_usuario = (SELECT id_usuario FROM usuarios WHERE correo = 'prueba.manual@correo.com'); DELETE FROM usuarios WHERE correo = 'prueba.manual@correo.com';"
+```
+
+Para las pruebas de roles (Ana, Beto y el cajero) hay que borrar también sus mascotas y antecedentes, en este orden:
+
+```bash
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM antecedentes_clinicos WHERE id_mascota IN (SELECT m.id_mascota FROM mascotas m JOIN clientes c ON c.id_cliente = m.id_cliente JOIN usuarios u ON u.id_usuario = c.id_usuario WHERE u.correo LIKE '%.roles@correo.com'); DELETE FROM mascotas WHERE id_cliente IN (SELECT c.id_cliente FROM clientes c JOIN usuarios u ON u.id_usuario = c.id_usuario WHERE u.correo LIKE '%.roles@correo.com'); DELETE FROM clientes WHERE id_usuario IN (SELECT id_usuario FROM usuarios WHERE correo LIKE '%.roles@correo.com'); DELETE FROM usuarios WHERE correo LIKE '%.roles@correo.com';"
 ```
 
 ## Documentación de la API (Swagger UI)
@@ -632,6 +718,22 @@ public ExpedienteDTO expediente(@PathVariable Integer id) { ... }
 Sin `@PreAuthorize`, el endpoint queda disponible para **cualquier usuario que haya iniciado sesión**, con cualquier rol.
 
 Para saber quién hace la petición (por ejemplo, para que un cliente solo vea sus mascotas), recibe `Authentication` en el método del controlador. `authentication.getName()` devuelve el correo del usuario.
+
+#### Permisos del módulo de clientes
+
+El módulo de clientes y mascotas aplica dos controles:
+
+1. **Por rol**, con `@PreAuthorize` en cada endpoint:
+
+| Endpoints | ADMIN | VETERINARIO | CAJERO | CLIENTE |
+|---|:-:|:-:|:-:|:-:|
+| `GET /api/clientes`, `POST /api/clientes`, `GET /api/mascotas` (directorios y alta en mostrador) | ✅ | ✅ | ✅ | ❌ |
+| Perfil del cliente, sus responsables, sus mascotas y consulta de antecedentes | ✅ | ✅ | ✅ | ✅ solo lo suyo |
+| `PATCH .../desactivar`, `PATCH .../reactivar`, crear/editar/borrar antecedentes | ✅ | ✅ | ❌ | ❌ |
+
+2. **Por pertenencia**, con `ValidadorAccesoCliente`: si quien llama es CLIENTE, el servicio comprueba que el perfil o la mascota sean suyos. Si no, responde **403** con `No tienes permiso para acceder o modificar la información de otro cliente` (o `... mascotas de otro cliente`). Además, un CLIENTE no puede cambiar la cuenta de usuario vinculada a su perfil ni pasar su mascota a otro cliente. El personal no tiene esta restricción.
+
+Un CLIENTE consulta su propio perfil con `GET /api/clientes/usuario/{idUsuario}`. El `idUsuario` viene en la respuesta del registro, en `cliente.idUsuario`. Las pruebas manuales de estos permisos están en [Roles y pertenencia](#roles-y-pertenencia-módulo-de-clientes).
 
 #### Contraseñas con BCrypt
 
