@@ -7,6 +7,7 @@ import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Import;
 import org.springframework.http.HttpHeaders;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -19,9 +20,13 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Simula las peticiones que hace el navegador desde el frontend en React
  * para comprobar que las reglas de {@link CorsConfig} se aplican.
+ * <p>
+ * {@code @WithMockUser} simula un usuario autenticado: la ruta de prueba es privada y aquí
+ * solo interesa comprobar CORS, no la seguridad (eso lo cubre {@code SecurityConfigTest}).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+@WithMockUser
 @Import(CorsConfigTest.PingController.class)
 class CorsConfigTest {
 
