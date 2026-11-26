@@ -201,7 +201,7 @@ export DB_PASSWORD="tu_contraseña"
 Si todo sale bien, al final aparece:
 
 ```
-[INFO] Tests run: 118, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 136, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -223,6 +223,7 @@ Si todo sale bien, al final aparece:
 | `auth.controller.AuthRegistroTest` | 13 | Registro: crea usuario y cliente vinculados, contraseña cifrada, token, login posterior, correo repetido y contraseñas débiles |
 | `auth.service.AuthRegistroTransaccionTest` | 1 | Si falla la creación del cliente, tampoco se guarda el usuario |
 | `personal.controller.PersonalControllerTest` | 19 | Personal: alta de veterinario y cajero, login del empleado nuevo, correo normalizado y repetido, cédula obligatoria, roles no permitidos, filtros, edición, desactivar/reactivar y permisos por rol |
+| `personal.controller.BloqueoDisponibilidadControllerTest` | 18 | Bloqueos: alta con fechas sin segundos, ausencia que ya empezó, lista sin terminados salvo `incluirPasados`, motivo inválido, fin antes del inicio, bloqueo ya terminado, bloqueos encimados (409), seguidos permitidos, edición, borrado, historial intocable, bloqueo de otra persona (404) y permisos por rol |
 | `personal.controller.HorarioPersonalControllerTest` | 17 | Turnos: alta con nombre del día y formato `HH:mm`, orden, segundos descartados, día fuera de rango, fin antes del inicio, turnos encimados (409), turnos seguidos permitidos, edición sin chocar consigo mismo, borrado, turno de otra persona (404) y permisos por rol |
 | `personal.service.PersonalAltaTransaccionTest` | 1 | Si falla el perfil de personal, tampoco se guarda la cuenta |
 | `personal.repository.PersonalRepositoryTest` | 12 | Entidades de personal, turnos y bloqueos contra la base: vínculo con el usuario, filtros por rol, orden, bloqueos encimados y reglas de la base |
@@ -507,6 +508,68 @@ $tVet = (Invoke-Api POST "/auth/login" @{ correo = "mario.horarios@veterinaria.c
 | 36. El veterinario se agrega un turno | `403` |
 | 37. Borrar | `204` |
 
+#### Bloqueos de agenda
+
+Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1. Primero da de alta a un veterinario:
+
+```powershell
+# 38. Alta de un veterinario para las pruebas → 201
+$alta = Invoke-Api POST "/personal" @{ correo = "sofia.bloqueos@veterinaria.com"; password = "Inicial123"; rol = "VETERINARIO"; nombre = "Sofía"; apellidos = "Bloqueos"; telefono = "5558889999"; cedulaProfesional = "11223344" } $token
+$alta.Codigo
+$idVet = $alta.Respuesta.idPersonal
+
+# 39. Vacaciones del 22 al 27 de diciembre de 2030 → 201
+$vac = Invoke-Api POST "/personal/$idVet/bloqueos" @{ fechaInicio = "2030-12-22T00:00"; fechaFin = "2030-12-27T00:00"; motivo = "PERSONAL"; notas = "Vacaciones" } $token
+$vac.Codigo
+$idVac = $vac.Respuesta.idBloqueo
+
+# 40. Cirugía que se encima con las vacaciones → 409 con el bloqueo que choca
+(Invoke-Api POST "/personal/$idVet/bloqueos" @{ fechaInicio = "2030-12-26T10:00"; fechaFin = "2030-12-26T14:00"; motivo = "CIRUGIA" } $token).Respuesta.message
+
+# 41. Día libre justo después de las vacaciones → 201
+(Invoke-Api POST "/personal/$idVet/bloqueos" @{ fechaInicio = "2030-12-27T00:00"; fechaFin = "2030-12-28T00:00"; motivo = "DIA_LIBRE" } $token).Codigo
+
+# 42. Bloqueo que ya terminó → 400
+(Invoke-Api POST "/personal/$idVet/bloqueos" @{ fechaInicio = "2020-01-01T08:00"; fechaFin = "2020-01-02T08:00"; motivo = "PERSONAL" } $token).Respuesta.message
+
+# 43. Motivo inválido → 400 con el error del campo
+(Invoke-Api POST "/personal/$idVet/bloqueos" @{ fechaInicio = "2030-11-01T08:00"; fechaFin = "2030-11-01T14:00"; motivo = "VACACIONES" } $token).Respuesta.errors
+
+# 44. Lista de bloqueos → ordenada por fecha
+(Invoke-Api GET "/personal/$idVet/bloqueos" -Token $token).Respuesta | Select-Object motivo, fechaInicio, fechaFin
+
+# 45. Alargar las vacaciones hasta el 29 → choca con el día libre del 27 → 409
+(Invoke-Api PUT "/personal/$idVet/bloqueos/$idVac" @{ fechaInicio = "2030-12-22T00:00"; fechaFin = "2030-12-29T00:00"; motivo = "PERSONAL" } $token).Codigo
+
+# 46. Adelantar el inicio de las vacaciones al 20 → 200
+(Invoke-Api PUT "/personal/$idVet/bloqueos/$idVac" @{ fechaInicio = "2030-12-20T00:00"; fechaFin = "2030-12-27T00:00"; motivo = "PERSONAL"; notas = "Vacaciones" } $token).Respuesta.fechaInicio
+
+# 47. La veterinaria consulta sus bloqueos → 2
+$tVet = (Invoke-Api POST "/auth/login" @{ correo = "sofia.bloqueos@veterinaria.com"; password = "Inicial123" }).Respuesta.token
+(Invoke-Api GET "/personal/mi-perfil/bloqueos" -Token $tVet).Respuesta.Count
+
+# 48. La veterinaria intenta registrarse un bloqueo → 403
+(Invoke-Api POST "/personal/$idVet/bloqueos" @{ fechaInicio = "2030-10-01T08:00"; fechaFin = "2030-10-01T14:00"; motivo = "CIRUGIA" } $tVet).Codigo
+
+# 49. Cancelar las vacaciones → 204
+(Invoke-Api DELETE "/personal/$idVet/bloqueos/$idVac" -Token $token).Codigo
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 38. Alta del veterinario | `201` |
+| 39. Vacaciones | `201` |
+| 40. Cirugía encimada | `El bloqueo se encima con otro bloqueo (PERSONAL) del 2030-12-22 00:00 al 2030-12-27 00:00` |
+| 41. Día libre seguido | `201` |
+| 42. Bloqueo ya terminado | `El bloqueo ya terminó: la fecha de fin debe ser futura` |
+| 43. Motivo inválido | Columna `motivo`: `El motivo debe ser PERSONAL, CIRUGIA o DIA_LIBRE` |
+| 44. Lista | `PERSONAL 2030-12-22T00:00 → 2030-12-27T00:00` y `DIA_LIBRE 2030-12-27T00:00 → 2030-12-28T00:00` |
+| 45. Alargar hasta chocar | `409` |
+| 46. Adelantar el inicio | `2030-12-20T00:00` |
+| 47. Sus bloqueos | `2` |
+| 48. La veterinaria se registra un bloqueo | `403` |
+| 49. Cancelar | `204` |
+
 #### Borrar las cuentas de prueba
 
 Las pruebas manuales **sí guardan datos**. Para borrar una cuenta de prueba (primero su perfil de cliente, después el usuario):
@@ -524,7 +587,7 @@ psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM antecede
 Para el personal de prueba basta con borrar sus usuarios: su perfil, turnos y bloqueos se borran solos (`ON DELETE CASCADE`):
 
 ```bash
-psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com');"
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com', 'sofia.bloqueos@veterinaria.com');"
 ```
 
 ## Documentación de la API (Swagger UI)
@@ -894,7 +957,7 @@ void adminPuedeEliminar() { ... }
 
 Gestiona a los empleados de la clínica (veterinarios y cajeros), sus turnos semanales y los bloqueos de su agenda. La agenda del Sprint 3 usará estos datos para calcular los horarios libres de cada veterinario.
 
-> **Estado:** Parte 1 (entidades y repositorios), Parte 2 (alta y gestión del personal) y Parte 3 (horarios) listas. Los bloqueos de agenda llegan en la Parte 4.
+> **Estado:** módulo completo: entidades y repositorios, alta y gestión del personal, horarios y bloqueos de agenda.
 
 ### Entidades
 
@@ -1039,3 +1102,63 @@ Respuesta `201` (mismo formato en la lista, la edición y `mi-perfil/horarios`):
 | El empleado debe existir | `404` |
 
 > **Pendiente para el módulo `config-clinica`:** validar que el turno quede dentro del horario de atención de la clínica (`HORARIOS_CLINICA`). Se agregará cuando exista esa entidad.
+
+### Bloqueos de agenda
+
+Periodos en que un empleado **no está disponible** aunque le toque turno: vacaciones, una cirugía programada o un día libre. En el Sprint 3 la agenda no ofrecerá citas en esos periodos.
+
+| Método y ruta | Quién | Qué hace | Respuesta |
+|---|---|---|---|
+| `POST /api/personal/{id}/bloqueos` | ADMIN | Registra un bloqueo | `201` |
+| `GET /api/personal/{id}/bloqueos` | ADMIN | Bloqueos vigentes y futuros, ordenados por fecha de inicio. Con `?incluirPasados=true` incluye también los que ya terminaron | `200` |
+| `PUT /api/personal/{id}/bloqueos/{idBloqueo}` | ADMIN | Edita un bloqueo que aún no termina | `200` |
+| `DELETE /api/personal/{id}/bloqueos/{idBloqueo}` | ADMIN | Cancela un bloqueo que aún no termina | `204` |
+| `GET /api/personal/mi-perfil/bloqueos` | VETERINARIO, CAJERO | El empleado consulta **sus** bloqueos (acepta `?incluirPasados=true`) | `200` |
+
+#### Registrar un bloqueo
+
+```http
+POST /api/personal/1/bloqueos
+Authorization: Bearer <token del ADMIN>
+Content-Type: application/json
+```
+
+```json
+{
+  "fechaInicio": "2026-12-22T00:00",
+  "fechaFin": "2026-12-27T00:00",
+  "motivo": "PERSONAL",
+  "notas": "Vacaciones de fin de año"
+}
+```
+
+Respuesta `201` (mismo formato en la lista, la edición y `mi-perfil/bloqueos`):
+
+```json
+{
+  "idBloqueo": 3,
+  "idPersonal": 1,
+  "fechaInicio": "2026-12-22T00:00",
+  "fechaFin": "2026-12-27T00:00",
+  "motivo": "PERSONAL",
+  "notas": "Vacaciones de fin de año"
+}
+```
+
+- `motivo`: `PERSONAL` (permiso o vacaciones), `CIRUGIA` (cirugía programada) o `DIA_LIBRE`.
+- Las fechas viajan como `"yyyy-MM-ddTHH:mm"`. Si llegan segundos, se descartan.
+
+#### Reglas
+
+| Regla | Si no se cumple |
+|---|---|
+| `motivo` es `PERSONAL`, `CIRUGIA` o `DIA_LIBRE` | `400`, `errors.motivo` |
+| `fechaFin` es posterior a `fechaInicio` | `400` `La fecha de fin debe ser posterior a la fecha de inicio` |
+| `fechaFin` es **futura**: no se registran bloqueos que ya terminaron. `fechaInicio` sí puede ser de hace un rato (una ausencia que empezó en la mañana) | `400` `El bloqueo ya terminó: la fecha de fin debe ser futura` |
+| Los bloqueos de una persona **no se enciman**. Bloqueos seguidos sí se permiten (uno termina el día 27 a las 00:00 y otro empieza a esa hora) | `409` `El bloqueo se encima con otro bloqueo (PERSONAL) del 2026-12-22 00:00 al 2026-12-27 00:00` |
+| Un bloqueo que **ya terminó** queda como historial: no se edita ni se borra | `400` `Un bloqueo que ya terminó no se puede editar ni borrar` |
+| Al editar, el bloqueo no se compara consigo mismo | |
+| `notas` es opcional, de máximo 255 caracteres | `400`, `errors.notas` |
+| El bloqueo debe pertenecer al empleado de la ruta, y el empleado debe existir | `404` |
+
+> **Pendiente para el Sprint 3 (agenda):** cuando existan las citas, decidir qué pasa si se bloquea un periodo en el que el veterinario ya tiene citas agendadas (avisar o impedirlo).
