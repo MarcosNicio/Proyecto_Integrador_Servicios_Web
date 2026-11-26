@@ -201,7 +201,7 @@ export DB_PASSWORD="tu_contraseña"
 Si todo sale bien, al final aparece:
 
 ```
-[INFO] Tests run: 145, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 157, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -224,6 +224,7 @@ Si todo sale bien, al final aparece:
 | `auth.controller.AuthRegistroTest` | 13 | Registro: crea usuario y cliente vinculados, contraseña cifrada, token, login posterior, correo repetido y contraseñas débiles |
 | `auth.service.AuthRegistroTransaccionTest` | 1 | Si falla la creación del cliente, tampoco se guarda el usuario |
 | `personal.controller.PersonalControllerTest` | 19 | Personal: alta de veterinario y cajero, login del empleado nuevo, correo normalizado y repetido, cédula obligatoria, roles no permitidos, filtros, edición, desactivar/reactivar y permisos por rol |
+| `agenda.repository.ConfigClinicaRepositoryTest` | 12 | Horario de la clínica, tipos de consultorio y consultorios contra la base: datos iniciales, búsquedas sin importar mayúsculas, filtros por tipo y activos, conteo de consultorios activos y reglas de la base (día repetido, cierre antes de la apertura, nombre de tipo repetido, consultorio sin tipo) |
 | `personal.controller.BloqueoDisponibilidadControllerTest` | 18 | Bloqueos: alta con fechas sin segundos, ausencia que ya empezó, lista sin terminados salvo `incluirPasados`, motivo inválido, fin antes del inicio, bloqueo ya terminado, bloqueos encimados (409), seguidos permitidos, edición, borrado, historial intocable, bloqueo de otra persona (404) y permisos por rol |
 | `personal.controller.HorarioPersonalControllerTest` | 17 | Turnos: alta con nombre del día y formato `HH:mm`, orden, segundos descartados, día fuera de rango, fin antes del inicio, turnos encimados (409), turnos seguidos permitidos, edición sin chocar consigo mismo, borrado, turno de otra persona (404) y permisos por rol |
 | `personal.service.PersonalAltaTransaccionTest` | 1 | Si falla el perfil de personal, tampoco se guarda la cuenta |
@@ -1255,3 +1256,31 @@ Respuesta `201` (mismo formato en la lista, la edición y `mi-perfil/bloqueos`):
 | El bloqueo debe pertenecer al empleado de la ruta, y el empleado debe existir | `404` |
 
 > **Pendiente para el Sprint 3 (agenda):** cuando existan las citas, decidir qué pasa si se bloquea un periodo en el que el veterinario ya tiene citas agendadas (avisar o impedirlo).
+
+## Configuración de la clínica (`agenda`)
+
+Horario de atención de la clínica y espacios físicos (tipos de consultorio y consultorios). Las clases están en el paquete `agenda` porque el motor de citas del Sprint 3 las usará: solo ofrecerá citas en días laborables, dentro del horario y en un consultorio libre del tipo que pide el servicio.
+
+> **Estado:** Parte 1 lista (entidades y repositorios). Los endpoints (`/api/config/horarios-clinica` y `/api/consultorios`) llegan en las siguientes partes.
+
+### Entidades
+
+| Entidad | Tabla | Qué guarda |
+|---|---|---|
+| `HorarioClinica` | `HORARIOS_CLINICA` | Un registro por día de la semana: hora de apertura, hora de cierre y si es laborable |
+| `TipoConsultorio` | `TIPOS_CONSULTORIO` | Clase de espacio (Consulta, Cirugía, Estética): nombre, descripción y si está activo |
+| `Consultorio` | `CONSULTORIOS` | Espacio físico (Consultorio 1, Quirófano…): su tipo, nombre y si está activo |
+
+- **Días de la semana:** `0` = domingo … `6` = sábado, igual que los turnos del personal.
+- **Datos iniciales** (los carga `veterinaria_db.sql`): lunes a viernes de 08:00 a 20:00, sábado de 08:00 a 18:00 y domingo de 09:00 a 14:00; los tipos Consulta, Cirugía y Estética; y los consultorios Consultorio 1, Consultorio 2, Quirófano y Sala de Estética.
+- **Reglas que ya cuida la base:** cada día aparece una sola vez, el cierre es posterior a la apertura (también en días no laborables), el nombre de un tipo no se repite y todo consultorio tiene tipo.
+- **Relación con el módulo de servicios:** cada servicio guarda el `idTipoConsultorio` que necesita y solo acepta tipos **activos**. Desactivar un tipo impide usarlo en servicios nuevos.
+- **Desactivar en lugar de borrar:** los consultorios y tipos no se borran, porque las citas pasadas los siguen referenciando. Se desactivan para que no se usen en citas nuevas.
+
+### Repositorios
+
+| Repositorio | Búsquedas |
+|---|---|
+| `HorarioClinicaRepository` | Horario de un día (`findByDiaSemana`) y la semana completa de domingo a sábado |
+| `TipoConsultorioRepository` | Todos o solo los activos (por nombre) y búsqueda por nombre sin importar mayúsculas |
+| `ConsultorioRepository` | Todos o solo los activos, los de un tipo (todos o activos), búsqueda por nombre sin importar mayúsculas y cuántos consultorios activos tiene un tipo |
