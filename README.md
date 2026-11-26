@@ -201,7 +201,7 @@ export DB_PASSWORD="tu_contraseña"
 Si todo sale bien, al final aparece:
 
 ```
-[INFO] Tests run: 101, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 118, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -223,6 +223,7 @@ Si todo sale bien, al final aparece:
 | `auth.controller.AuthRegistroTest` | 13 | Registro: crea usuario y cliente vinculados, contraseña cifrada, token, login posterior, correo repetido y contraseñas débiles |
 | `auth.service.AuthRegistroTransaccionTest` | 1 | Si falla la creación del cliente, tampoco se guarda el usuario |
 | `personal.controller.PersonalControllerTest` | 19 | Personal: alta de veterinario y cajero, login del empleado nuevo, correo normalizado y repetido, cédula obligatoria, roles no permitidos, filtros, edición, desactivar/reactivar y permisos por rol |
+| `personal.controller.HorarioPersonalControllerTest` | 17 | Turnos: alta con nombre del día y formato `HH:mm`, orden, segundos descartados, día fuera de rango, fin antes del inicio, turnos encimados (409), turnos seguidos permitidos, edición sin chocar consigo mismo, borrado, turno de otra persona (404) y permisos por rol |
 | `personal.service.PersonalAltaTransaccionTest` | 1 | Si falla el perfil de personal, tampoco se guarda la cuenta |
 | `personal.repository.PersonalRepositoryTest` | 12 | Entidades de personal, turnos y bloqueos contra la base: vínculo con el usuario, filtros por rol, orden, bloqueos encimados y reglas de la base |
 
@@ -446,6 +447,66 @@ $tVet = (Invoke-Api POST "/auth/login" @{ correo = "laura.prueba@veterinaria.com
 | 25. Desactivar | `204`, `401`, `403` |
 | 26. Reactivar | `True`, `200` |
 
+#### Horarios del personal
+
+Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1. Primero da de alta a un veterinario para asignarle turnos:
+
+```powershell
+# 27. Alta de un veterinario para las pruebas → 201
+$alta = Invoke-Api POST "/personal" @{ correo = "mario.horarios@veterinaria.com"; password = "Inicial123"; rol = "VETERINARIO"; nombre = "Mario"; apellidos = "Horarios"; telefono = "5556667777"; cedulaProfesional = "87654321" } $token
+$alta.Codigo
+$idVet = $alta.Respuesta.idPersonal
+
+# 28. Turno del lunes de 08:00 a 14:00 → 201 con nombreDia "Lunes"
+$turno = Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 1; horaInicio = "08:00"; horaFin = "14:00" } $token
+$turno.Codigo
+$turno.Respuesta.nombreDia
+$idTurno = $turno.Respuesta.idHorario
+
+# 29. Turno que se encima (12:00-18:00) → 409 con el turno que choca
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 1; horaInicio = "12:00"; horaFin = "18:00" } $token).Respuesta.message
+
+# 30. Turno seguido (14:00-18:00) → 201
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 1; horaInicio = "14:00"; horaFin = "18:00" } $token).Codigo
+
+# 31. Fin antes del inicio → 400
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 2; horaInicio = "14:00"; horaFin = "08:00" } $token).Codigo
+
+# 32. Día 7 → 400 con el error del campo
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 7; horaInicio = "08:00"; horaFin = "14:00" } $token).Respuesta.errors
+
+# 33. Turno del sábado y lista de la semana → ordenada por día y hora
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 6; horaInicio = "09:00"; horaFin = "13:00" } $token).Codigo
+(Invoke-Api GET "/personal/$idVet/horarios" -Token $token).Respuesta | Select-Object nombreDia, horaInicio, horaFin
+
+# 34. Editar el turno del lunes para que termine a las 13:00 → 200
+(Invoke-Api PUT "/personal/$idVet/horarios/$idTurno" @{ diaSemana = 1; horaInicio = "08:00"; horaFin = "13:00" } $token).Respuesta.horaFin
+
+# 35. El veterinario consulta sus turnos → 3 turnos
+$tVet = (Invoke-Api POST "/auth/login" @{ correo = "mario.horarios@veterinaria.com"; password = "Inicial123" }).Respuesta.token
+(Invoke-Api GET "/personal/mi-perfil/horarios" -Token $tVet).Respuesta.Count
+
+# 36. El veterinario intenta agregarse un turno → 403
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 3; horaInicio = "08:00"; horaFin = "14:00" } $tVet).Codigo
+
+# 37. Borrar el turno del lunes → 204
+(Invoke-Api DELETE "/personal/$idVet/horarios/$idTurno" -Token $token).Codigo
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 27. Alta del veterinario | `201` |
+| 28. Turno del lunes | `201` y `Lunes` |
+| 29. Turno encimado | `El turno se encima con el turno del Lunes de 08:00 a 14:00` |
+| 30. Turno seguido | `201` |
+| 31. Fin antes del inicio | `400` |
+| 32. Día 7 | Columna `diaSemana`: `El día de la semana debe estar entre 0 (domingo) y 6 (sábado)` |
+| 33. Lista de la semana | `Lunes 08:00-14:00`, `Lunes 14:00-18:00`, `Sábado 09:00-13:00` |
+| 34. Edición | `13:00` |
+| 35. Sus turnos | `3` |
+| 36. El veterinario se agrega un turno | `403` |
+| 37. Borrar | `204` |
+
 #### Borrar las cuentas de prueba
 
 Las pruebas manuales **sí guardan datos**. Para borrar una cuenta de prueba (primero su perfil de cliente, después el usuario):
@@ -463,7 +524,7 @@ psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM antecede
 Para el personal de prueba basta con borrar sus usuarios: su perfil, turnos y bloqueos se borran solos (`ON DELETE CASCADE`):
 
 ```bash
-psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com');"
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com');"
 ```
 
 ## Documentación de la API (Swagger UI)
@@ -833,7 +894,7 @@ void adminPuedeEliminar() { ... }
 
 Gestiona a los empleados de la clínica (veterinarios y cajeros), sus turnos semanales y los bloqueos de su agenda. La agenda del Sprint 3 usará estos datos para calcular los horarios libres de cada veterinario.
 
-> **Estado:** Parte 1 (entidades y repositorios) y Parte 2 (alta y gestión del personal) listas. Los endpoints de horarios y bloqueos llegan en las siguientes partes.
+> **Estado:** Parte 1 (entidades y repositorios), Parte 2 (alta y gestión del personal) y Parte 3 (horarios) listas. Los bloqueos de agenda llegan en la Parte 4.
 
 ### Entidades
 
@@ -924,3 +985,57 @@ La respuesta **nunca** incluye la contraseña. Con esa contraseña inicial, el e
 | Desactivar o reactivar dos veces seguidas no da error | |
 
 Para el frontend: el `idPersonal` es el que usarán los turnos, los bloqueos y, en el Sprint 3, las citas (`id_veterinario`).
+
+### Horarios del personal
+
+Turnos de trabajo semanales de cada empleado (por ejemplo, "lunes de 08:00 a 14:00"). En el Sprint 3 la agenda los cruzará con el horario de la clínica y los bloqueos para calcular los espacios libres de cada veterinario.
+
+| Método y ruta | Quién | Qué hace | Respuesta |
+|---|---|---|---|
+| `POST /api/personal/{id}/horarios` | ADMIN | Agrega un turno | `201` |
+| `GET /api/personal/{id}/horarios` | ADMIN | Turnos de la semana, de domingo a sábado y por hora de inicio | `200` |
+| `PUT /api/personal/{id}/horarios/{idHorario}` | ADMIN | Edita un turno | `200` |
+| `DELETE /api/personal/{id}/horarios/{idHorario}` | ADMIN | Borra un turno | `204` |
+| `GET /api/personal/mi-perfil/horarios` | VETERINARIO, CAJERO | El empleado consulta **sus** turnos, según su token | `200` |
+
+#### Agregar un turno
+
+```http
+POST /api/personal/1/horarios
+Authorization: Bearer <token del ADMIN>
+Content-Type: application/json
+```
+
+```json
+{ "diaSemana": 1, "horaInicio": "08:00", "horaFin": "14:00" }
+```
+
+Respuesta `201` (mismo formato en la lista, la edición y `mi-perfil/horarios`):
+
+```json
+{
+  "idHorario": 5,
+  "idPersonal": 1,
+  "diaSemana": 1,
+  "nombreDia": "Lunes",
+  "horaInicio": "08:00",
+  "horaFin": "14:00"
+}
+```
+
+- `diaSemana`: `0` = domingo, `1` = lunes … `6` = sábado. `nombreDia` viene ya convertido para el frontend.
+- Las horas viajan como `"HH:mm"`. Si llegan segundos (`"08:00:45"`), se descartan.
+
+#### Reglas
+
+| Regla | Si no se cumple |
+|---|---|
+| `diaSemana` va de 0 a 6 | `400`, `errors.diaSemana` |
+| `horaFin` es posterior a `horaInicio`: un turno no cruza la medianoche | `400` `La hora de fin debe ser posterior a la hora de inicio (el turno no puede cruzar la medianoche)` |
+| Los turnos de una persona en un mismo día **no se enciman**: con 08:00-14:00 no se puede agregar 12:00-18:00 | `409` `El turno se encima con el turno del Lunes de 08:00 a 14:00` |
+| Turnos seguidos sí se permiten (08:00-13:00 y 13:00-17:00), igual que varios turnos el mismo día (08:00-13:00 y 16:00-20:00) | |
+| Al editar, el turno no se compara consigo mismo (se puede alargar o mover sin conflicto) | |
+| El turno debe pertenecer al empleado de la ruta: `/personal/1/horarios/9` con un turno de otra persona responde 404 | `404` |
+| El empleado debe existir | `404` |
+
+> **Pendiente para el módulo `config-clinica`:** validar que el turno quede dentro del horario de atención de la clínica (`HORARIOS_CLINICA`). Se agregará cuando exista esa entidad.

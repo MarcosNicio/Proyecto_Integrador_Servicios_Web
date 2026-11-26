@@ -107,9 +107,7 @@ public class PersonalService {
      */
     @Transactional(readOnly = true)
     public PersonalResponseDTO obtenerMiPerfil(String correo) {
-        return personalRepository.findByUsuarioCorreo(correo)
-                .map(this::mapear)
-                .orElseThrow(() -> new ResourceNotFoundException(MENSAJE_SIN_PERFIL));
+        return mapear(buscarPorCorreoOError(correo));
     }
 
     /**
@@ -164,6 +162,16 @@ public class PersonalService {
     public Personal buscarOError(Integer idPersonal) {
         return personalRepository.findById(idPersonal)
                 .orElseThrow(() -> new ResourceNotFoundException("Personal no encontrado con id " + idPersonal));
+    }
+
+    /**
+     * Busca el perfil de quien inició sesión (por el correo de su token) o lanza 404. La usan
+     * los endpoints {@code /mi-perfil} del módulo.
+     */
+    @Transactional(readOnly = true)
+    public Personal buscarPorCorreoOError(String correo) {
+        return personalRepository.findByUsuarioCorreo(correo)
+                .orElseThrow(() -> new ResourceNotFoundException(MENSAJE_SIN_PERFIL));
     }
 
     // ---------- Ayudantes ----------
