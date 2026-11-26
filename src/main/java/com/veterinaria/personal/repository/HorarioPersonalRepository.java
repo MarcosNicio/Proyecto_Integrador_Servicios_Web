@@ -2,6 +2,7 @@ package com.veterinaria.personal.repository;
 
 import com.veterinaria.personal.entity.HorarioPersonal;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
 
 import java.util.List;
 import java.util.Optional;
@@ -20,4 +21,14 @@ public interface HorarioPersonalRepository extends JpaRepository<HorarioPersonal
 
     /** Un turno concreto, solo si pertenece a esa persona. */
     Optional<HorarioPersonal> findByIdHorarioPersonalAndPersonalIdPersonal(Integer idHorarioPersonal, Integer idPersonal);
+
+    /**
+     * Los turnos de todo el personal, con su empleado ya cargado (para nombrarlos sin consultas
+     * extra), ordenados por apellidos, nombre, día y hora. Lo usa la revisión del horario de la clínica.
+     */
+    @Query("""
+            SELECT h FROM HorarioPersonal h JOIN FETCH h.personal p
+            ORDER BY p.apellidos, p.nombre, h.diaSemana, h.horaInicio
+            """)
+    List<HorarioPersonal> findAllConPersonal();
 }

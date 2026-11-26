@@ -1,5 +1,7 @@
 package com.veterinaria.personal.controller;
 
+import com.veterinaria.agenda.entity.HorarioClinica;
+import com.veterinaria.agenda.repository.HorarioClinicaRepository;
 import com.veterinaria.auth.entity.Rol;
 import com.veterinaria.auth.entity.Usuario;
 import com.veterinaria.auth.repository.UsuarioRepository;
@@ -17,6 +19,8 @@ import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.time.LocalTime;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
@@ -53,6 +57,9 @@ class HorarioPersonalControllerTest {
 
     @Autowired
     private HorarioPersonalRepository horarioRepository;
+
+    @Autowired
+    private HorarioClinicaRepository horarioClinicaRepository;
 
     private Integer idVet;
     private Integer idCajero;
@@ -134,7 +141,7 @@ class HorarioPersonalControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.message").value("El turno se encima con el turno del Lunes de 08:00 a 14:00"));
         // Uno que lo cubre por completo también choca
-        agregar(idVet, 1, "07:00", "15:00").andExpect(status().isConflict());
+        agregar(idVet, 1, "08:00", "15:00").andExpect(status().isConflict());
     }
 
     @Test
@@ -151,6 +158,92 @@ class HorarioPersonalControllerTest {
     void empleadoInexistenteDevuelve404() throws Exception {
         agregar(999999, 1, "08:00", "14:00").andExpect(status().isNotFound());
         mockMvc.perform(get("/api/personal/999999/horarios")).andExpect(status().isNotFound());
+    }
+
+    // ---------- Horario de la clínica ----------
+
+    @Test
+    void turnoQueEmpiezaAntesDeLaAperturaDevuelve409() throws Exception {
+        fijarHorarioClinica(0, "09:00", "14:00", true);
+
+        agregar(idVet, 0, "08:00", "12:00")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message")
+                        .value("El turno queda fuera del horario de la clínica del Domingo (09:00 a 14:00)"));
+    }
+
+    @Test
+    void turnoQueTerminaDespuesDelCierreDevuelve409() throws Exception {
+        fijarHorarioClinica(6, "08:00", "18:00", true);
+
+        agregar(idVet, 6, "10:00", "19:00")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message")
+                        .value("El turno queda fuera del horario de la clínica del Sábado (08:00 a 18:00)"));
+    }
+
+    @Test
+    void turnoEnUnDiaQueLaClinicaNoAbreDevuelve409() throws Exception {
+        fijarHorarioClinica(0, "09:00", "14:00", false);
+
+        agregar(idVet, 0, "09:00", "12:00")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message")
+                        .value("La clínica no abre el Domingo: no se puede asignar un turno ese día"));
+    }
+
+    @Test
+    void turnoQueCoincideExactamenteConElHorarioDeLaClinicaSiCabe() throws Exception {
+        fijarHorarioClinica(0, "09:00", "14:00", true);
+
+        agregar(idVet, 0, "09:00", "14:00")
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.horaInicio").value("09:00"))
+                .andExpect(jsonPath("$.horaFin").value("14:00"));
+    }
+
+    @Test
+    void elRangoInvalidoSeRevisaAntesQueElHorarioDeLaClinica() throws Exception {
+        fijarHorarioClinica(0, "09:00", "14:00", true);
+
+        // Fin antes del inicio y además fuera de horario: gana el error del rango (400)
+        agregar(idVet, 0, "13:00", "07:00")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(HorarioPersonalService.MENSAJE_RANGO_INVALIDO));
+    }
+
+    @Test
+    void editarUnTurnoHaciaFueraDelHorarioDeLaClinicaDevuelve409() throws Exception {
+        fijarHorarioClinica(1, "08:00", "20:00", true);
+        Integer id = idDe(agregar(idVet, 1, "09:00", "12:00"));
+
+        editar(idVet, id, 1, "07:00", "12:00").andExpect(status().isConflict());
+        editar(idVet, id, 1, "09:00", "21:00").andExpect(status().isConflict());
+        // Dentro del horario (incluso justo en la apertura) sí se puede
+        editar(idVet, id, 1, "08:00", "12:00")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.horaInicio").value("08:00"));
+    }
+
+    @Test
+    void moverUnTurnoAUnDiaCerradoDevuelve409() throws Exception {
+        fijarHorarioClinica(1, "08:00", "20:00", true);
+        fijarHorarioClinica(0, "09:00", "14:00", false);
+        Integer id = idDe(agregar(idVet, 1, "09:00", "12:00"));
+
+        editar(idVet, id, 0, "09:00", "12:00")
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("La clínica no abre el Domingo: no se puede asignar un turno ese día"));
+    }
+
+    @Test
+    void alAchicarElHorarioDeLaClinicaYaNoSePuedeAgregarEnEsasHoras() throws Exception {
+        fijarHorarioClinica(6, "08:00", "18:00", true);
+        agregar(idVet, 6, "16:00", "18:00").andExpect(status().isCreated());
+
+        fijarHorarioClinica(6, "08:00", "14:00", true);
+        agregar(idCajero, 6, "16:00", "18:00").andExpect(status().isConflict());
+        agregar(idCajero, 6, "10:00", "14:00").andExpect(status().isCreated());
     }
 
     // ---------- Editar y borrar ----------
@@ -251,6 +344,15 @@ class HorarioPersonalControllerTest {
     private Integer idDe(ResultActions resultado) throws Exception {
         String json = resultado.andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
         return Integer.valueOf(json.replaceAll(".*\"idHorario\":(\\d+).*", "$1"));
+    }
+
+    /** Cambia el horario de la clínica de un día (se deshace al terminar la prueba). */
+    private void fijarHorarioClinica(int dia, String apertura, String cierre, boolean laborable) {
+        HorarioClinica horario = horarioClinicaRepository.findByDiaSemana(dia).orElseThrow();
+        horario.setHoraApertura(LocalTime.parse(apertura));
+        horario.setHoraCierre(LocalTime.parse(cierre));
+        horario.setLaborable(laborable);
+        horarioClinicaRepository.saveAndFlush(horario);
     }
 
     private Integer guardarPersonal(String correo, Rol rol) {

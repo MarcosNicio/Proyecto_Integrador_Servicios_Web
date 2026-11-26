@@ -1,5 +1,8 @@
 package com.veterinaria.personal.service;
 
+import com.veterinaria.agenda.entity.HorarioClinica;
+import com.veterinaria.agenda.repository.HorarioClinicaRepository;
+import com.veterinaria.agenda.service.HorarioClinicaService;
 import com.veterinaria.common.exception.BusinessException;
 import com.veterinaria.common.exception.ConflictException;
 import com.veterinaria.common.exception.ResourceNotFoundException;
@@ -19,9 +22,12 @@ import java.util.List;
 /**
  * Lógica de los turnos de trabajo semanales del personal ({@code HORARIOS_PERSONAL}).
  * <p>
- * Reglas: el fin va después del inicio (sin cruzar la medianoche) y los turnos de una misma
- * persona en un mismo día no se enciman. Dos turnos seguidos (08:00-13:00 y 13:00-17:00) sí
- * se permiten.
+ * Reglas: el fin va después del inicio (sin cruzar la medianoche), el turno cabe en el horario
+ * de la clínica de ese día, y los turnos de una misma persona en un mismo día no se enciman.
+ * Dos turnos seguidos (08:00-13:00 y 13:00-17:00) sí se permiten.
+ * <p>
+ * Junto con la revisión de {@link HorarioClinicaService} al cambiar el horario de la clínica,
+ * garantiza que ningún turno quede fuera del horario de atención.
  */
 @Service
 @RequiredArgsConstructor
@@ -35,6 +41,7 @@ public class HorarioPersonalService {
             {"Domingo", "Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado"};
 
     private final HorarioPersonalRepository horarioRepository;
+    private final HorarioClinicaRepository horarioClinicaRepository;
     private final PersonalService personalService;
 
     /**
@@ -42,7 +49,8 @@ public class HorarioPersonalService {
      *
      * @throws ResourceNotFoundException si el empleado no existe (404)
      * @throws BusinessException         si el fin no es posterior al inicio (400)
-     * @throws ConflictException         si se encima con otro de sus turnos ese día (409)
+     * @throws ConflictException         si queda fuera del horario de la clínica, o se encima con otro
+     *                                   de sus turnos ese día (409)
      */
     @Transactional
     public HorarioPersonalResponseDTO agregar(Integer idPersonal, HorarioPersonalRequestDTO dto) {
@@ -50,6 +58,7 @@ public class HorarioPersonalService {
         LocalTime inicio = sinSegundos(dto.getHoraInicio());
         LocalTime fin = sinSegundos(dto.getHoraFin());
         validarRango(inicio, fin);
+        validarQueCabaEnLaClinica(dto.getDiaSemana(), inicio, fin);
         validarQueNoSeEncime(idPersonal, dto.getDiaSemana(), inicio, fin, null);
 
         HorarioPersonal horario = horarioRepository.save(HorarioPersonal.builder()
@@ -89,7 +98,8 @@ public class HorarioPersonalService {
      *
      * @throws ResourceNotFoundException si el turno no existe o es de otro empleado (404)
      * @throws BusinessException         si el fin no es posterior al inicio (400)
-     * @throws ConflictException         si se encima con otro de sus turnos ese día (409)
+     * @throws ConflictException         si queda fuera del horario de la clínica, o se encima con otro
+     *                                   de sus turnos ese día (409)
      */
     @Transactional
     public HorarioPersonalResponseDTO actualizar(Integer idPersonal, Integer idHorario, HorarioPersonalRequestDTO dto) {
@@ -97,6 +107,7 @@ public class HorarioPersonalService {
         LocalTime inicio = sinSegundos(dto.getHoraInicio());
         LocalTime fin = sinSegundos(dto.getHoraFin());
         validarRango(inicio, fin);
+        validarQueCabaEnLaClinica(dto.getDiaSemana(), inicio, fin);
         validarQueNoSeEncime(idPersonal, dto.getDiaSemana(), inicio, fin, idHorario);
 
         horario.setDiaSemana(dto.getDiaSemana());
@@ -133,6 +144,29 @@ public class HorarioPersonalService {
     private void validarRango(LocalTime inicio, LocalTime fin) {
         if (!fin.isAfter(inicio)) {
             throw new BusinessException(MENSAJE_RANGO_INVALIDO);
+        }
+    }
+
+    /**
+     * El turno debe caer en un día en que la clínica abre y dentro de su horario. Un turno que
+     * coincide exactamente con la apertura y el cierre sí cabe.
+     * <p>
+     * Si el día no tuviera horario registrado (con los datos iniciales siempre existen los 7),
+     * no se bloquea el turno.
+     */
+    private void validarQueCabaEnLaClinica(Integer diaSemana, LocalTime inicio, LocalTime fin) {
+        HorarioClinica clinica = horarioClinicaRepository.findByDiaSemana(diaSemana).orElse(null);
+        if (clinica == null) {
+            return;
+        }
+        if (!Boolean.TRUE.equals(clinica.getLaborable())) {
+            throw new ConflictException("La clínica no abre el " + nombreDia(diaSemana)
+                    + ": no se puede asignar un turno ese día");
+        }
+        if (HorarioClinicaService.turnoFueraDeHorario(true, clinica.getHoraApertura(), clinica.getHoraCierre(),
+                inicio, fin)) {
+            throw new ConflictException("El turno queda fuera del horario de la clínica del " + nombreDia(diaSemana)
+                    + " (" + clinica.getHoraApertura() + " a " + clinica.getHoraCierre() + ")");
         }
     }
 
