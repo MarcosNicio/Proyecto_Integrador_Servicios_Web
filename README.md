@@ -201,7 +201,7 @@ export DB_PASSWORD="tu_contraseña"
 Si todo sale bien, al final aparece:
 
 ```
-[INFO] Tests run: 69, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 136, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -222,6 +222,11 @@ Si todo sale bien, al final aparece:
 | `auth.controller.AuthControllerTest` | 10 | Login: credenciales correctas e incorrectas, cuenta desactivada, validaciones y uso del token |
 | `auth.controller.AuthRegistroTest` | 13 | Registro: crea usuario y cliente vinculados, contraseña cifrada, token, login posterior, correo repetido y contraseñas débiles |
 | `auth.service.AuthRegistroTransaccionTest` | 1 | Si falla la creación del cliente, tampoco se guarda el usuario |
+| `personal.controller.PersonalControllerTest` | 19 | Personal: alta de veterinario y cajero, login del empleado nuevo, correo normalizado y repetido, cédula obligatoria, roles no permitidos, filtros, edición, desactivar/reactivar y permisos por rol |
+| `personal.controller.BloqueoDisponibilidadControllerTest` | 18 | Bloqueos: alta con fechas sin segundos, ausencia que ya empezó, lista sin terminados salvo `incluirPasados`, motivo inválido, fin antes del inicio, bloqueo ya terminado, bloqueos encimados (409), seguidos permitidos, edición, borrado, historial intocable, bloqueo de otra persona (404) y permisos por rol |
+| `personal.controller.HorarioPersonalControllerTest` | 17 | Turnos: alta con nombre del día y formato `HH:mm`, orden, segundos descartados, día fuera de rango, fin antes del inicio, turnos encimados (409), turnos seguidos permitidos, edición sin chocar consigo mismo, borrado, turno de otra persona (404) y permisos por rol |
+| `personal.service.PersonalAltaTransaccionTest` | 1 | Si falla el perfil de personal, tampoco se guarda la cuenta |
+| `personal.repository.PersonalRepositoryTest` | 12 | Entidades de personal, turnos y bloqueos contra la base: vínculo con el usuario, filtros por rol, orden, bloqueos encimados y reglas de la base |
 
 #### Si algo falla
 
@@ -381,6 +386,190 @@ Ahora prueba cada caso. Todos muestran solo el código HTTP:
 | 14. Admin crea un antecedente | `201` |
 | 15. Mensaje | `No tienes permiso para acceder o modificar la información de otro cliente` |
 
+#### Personal (alta y gestión)
+
+Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1.
+
+```powershell
+# 16. Alta de una veterinaria → 201
+$vet = @{ correo = "laura.prueba@veterinaria.com"; password = "Inicial123"; rol = "VETERINARIO"; nombre = "Laura"; apellidos = "Zamora"; telefono = "5551112222"; cedulaProfesional = "12345678"; especialidadEspecies = "Perros, Gatos" }
+$alta = Invoke-Api POST "/personal" $vet $token
+$alta.Codigo
+$idVet = $alta.Respuesta.idPersonal
+
+# 17. El mismo correo otra vez → 409
+(Invoke-Api POST "/personal" $vet $token).Codigo
+
+# 18. Veterinario sin cédula → 400 con el mensaje
+$sinCedula = $vet.Clone(); $sinCedula.correo = "otro.vet@veterinaria.com"; $sinCedula.Remove("cedulaProfesional")
+(Invoke-Api POST "/personal" $sinCedula $token).Respuesta.message
+
+# 19. Rol no permitido → 400 con el error del campo
+$rolMalo = $vet.Clone(); $rolMalo.correo = "otro.vet@veterinaria.com"; $rolMalo.rol = "ADMIN"
+(Invoke-Api POST "/personal" $rolMalo $token).Respuesta.errors
+
+# 20. Alta de un cajero (sin cédula) → 201
+(Invoke-Api POST "/personal" @{ correo = "pedro.prueba@veterinaria.com"; password = "Inicial123"; rol = "CAJERO"; nombre = "Pedro"; apellidos = "Alvarez"; telefono = "5553334444" } $token).Codigo
+
+# 21. Lista filtrada: solo veterinarios → solo aparece Laura
+(Invoke-Api GET "/personal?rol=VETERINARIO" -Token $token).Respuesta | Select-Object idPersonal, correo, rol, activo
+
+# 22. Editar el perfil → 200 con el teléfono nuevo
+(Invoke-Api PUT "/personal/$idVet" @{ nombre = "Laura"; apellidos = "Zamora"; telefono = "5559998888"; cedulaProfesional = "12345678" } $token).Respuesta.telefono
+
+# 23. La veterinaria inicia sesión y consulta su perfil → 200
+$tVet = (Invoke-Api POST "/auth/login" @{ correo = "laura.prueba@veterinaria.com"; password = "Inicial123" }).Respuesta.token
+(Invoke-Api GET "/personal/mi-perfil" -Token $tVet).Respuesta.correo
+
+# 24. La veterinaria intenta ver la lista del personal → 403
+(Invoke-Api GET "/personal" -Token $tVet).Codigo
+
+# 25. Desactivar → 204; su token deja de servir (401) y ya no puede iniciar sesión (403)
+(Invoke-Api PATCH "/personal/$idVet/desactivar" -Token $token).Codigo
+(Invoke-Api GET "/personal/mi-perfil" -Token $tVet).Codigo
+(Invoke-Api POST "/auth/login" @{ correo = "laura.prueba@veterinaria.com"; password = "Inicial123" }).Codigo
+
+# 26. Reactivar → 200 y vuelve a iniciar sesión
+(Invoke-Api PATCH "/personal/$idVet/reactivar" -Token $token).Respuesta.activo
+(Invoke-Api POST "/auth/login" @{ correo = "laura.prueba@veterinaria.com"; password = "Inicial123" }).Codigo
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 16. Alta de veterinaria | `201` |
+| 17. Correo repetido | `409` |
+| 18. Veterinario sin cédula | `La cédula profesional es obligatoria para veterinarios` |
+| 19. Rol `ADMIN` | Columna `rol`: `El rol debe ser VETERINARIO o CAJERO` |
+| 20. Alta de cajero sin cédula | `201` |
+| 21. Filtro por rol | Solo `laura.prueba@veterinaria.com`, con rol `VETERINARIO` |
+| 22. Edición | `5559998888` |
+| 23. Su propio perfil | `laura.prueba@veterinaria.com` |
+| 24. Veterinaria en la lista del personal | `403` |
+| 25. Desactivar | `204`, `401`, `403` |
+| 26. Reactivar | `True`, `200` |
+
+#### Horarios del personal
+
+Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1. Primero da de alta a un veterinario para asignarle turnos:
+
+```powershell
+# 27. Alta de un veterinario para las pruebas → 201
+$alta = Invoke-Api POST "/personal" @{ correo = "mario.horarios@veterinaria.com"; password = "Inicial123"; rol = "VETERINARIO"; nombre = "Mario"; apellidos = "Horarios"; telefono = "5556667777"; cedulaProfesional = "87654321" } $token
+$alta.Codigo
+$idVet = $alta.Respuesta.idPersonal
+
+# 28. Turno del lunes de 08:00 a 14:00 → 201 con nombreDia "Lunes"
+$turno = Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 1; horaInicio = "08:00"; horaFin = "14:00" } $token
+$turno.Codigo
+$turno.Respuesta.nombreDia
+$idTurno = $turno.Respuesta.idHorario
+
+# 29. Turno que se encima (12:00-18:00) → 409 con el turno que choca
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 1; horaInicio = "12:00"; horaFin = "18:00" } $token).Respuesta.message
+
+# 30. Turno seguido (14:00-18:00) → 201
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 1; horaInicio = "14:00"; horaFin = "18:00" } $token).Codigo
+
+# 31. Fin antes del inicio → 400
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 2; horaInicio = "14:00"; horaFin = "08:00" } $token).Codigo
+
+# 32. Día 7 → 400 con el error del campo
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 7; horaInicio = "08:00"; horaFin = "14:00" } $token).Respuesta.errors
+
+# 33. Turno del sábado y lista de la semana → ordenada por día y hora
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 6; horaInicio = "09:00"; horaFin = "13:00" } $token).Codigo
+(Invoke-Api GET "/personal/$idVet/horarios" -Token $token).Respuesta | Select-Object nombreDia, horaInicio, horaFin
+
+# 34. Editar el turno del lunes para que termine a las 13:00 → 200
+(Invoke-Api PUT "/personal/$idVet/horarios/$idTurno" @{ diaSemana = 1; horaInicio = "08:00"; horaFin = "13:00" } $token).Respuesta.horaFin
+
+# 35. El veterinario consulta sus turnos → 3 turnos
+$tVet = (Invoke-Api POST "/auth/login" @{ correo = "mario.horarios@veterinaria.com"; password = "Inicial123" }).Respuesta.token
+(Invoke-Api GET "/personal/mi-perfil/horarios" -Token $tVet).Respuesta.Count
+
+# 36. El veterinario intenta agregarse un turno → 403
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 3; horaInicio = "08:00"; horaFin = "14:00" } $tVet).Codigo
+
+# 37. Borrar el turno del lunes → 204
+(Invoke-Api DELETE "/personal/$idVet/horarios/$idTurno" -Token $token).Codigo
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 27. Alta del veterinario | `201` |
+| 28. Turno del lunes | `201` y `Lunes` |
+| 29. Turno encimado | `El turno se encima con el turno del Lunes de 08:00 a 14:00` |
+| 30. Turno seguido | `201` |
+| 31. Fin antes del inicio | `400` |
+| 32. Día 7 | Columna `diaSemana`: `El día de la semana debe estar entre 0 (domingo) y 6 (sábado)` |
+| 33. Lista de la semana | `Lunes 08:00-14:00`, `Lunes 14:00-18:00`, `Sábado 09:00-13:00` |
+| 34. Edición | `13:00` |
+| 35. Sus turnos | `3` |
+| 36. El veterinario se agrega un turno | `403` |
+| 37. Borrar | `204` |
+
+#### Bloqueos de agenda
+
+Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1. Primero da de alta a un veterinario:
+
+```powershell
+# 38. Alta de un veterinario para las pruebas → 201
+$alta = Invoke-Api POST "/personal" @{ correo = "sofia.bloqueos@veterinaria.com"; password = "Inicial123"; rol = "VETERINARIO"; nombre = "Sofía"; apellidos = "Bloqueos"; telefono = "5558889999"; cedulaProfesional = "11223344" } $token
+$alta.Codigo
+$idVet = $alta.Respuesta.idPersonal
+
+# 39. Vacaciones del 22 al 27 de diciembre de 2030 → 201
+$vac = Invoke-Api POST "/personal/$idVet/bloqueos" @{ fechaInicio = "2030-12-22T00:00"; fechaFin = "2030-12-27T00:00"; motivo = "PERSONAL"; notas = "Vacaciones" } $token
+$vac.Codigo
+$idVac = $vac.Respuesta.idBloqueo
+
+# 40. Cirugía que se encima con las vacaciones → 409 con el bloqueo que choca
+(Invoke-Api POST "/personal/$idVet/bloqueos" @{ fechaInicio = "2030-12-26T10:00"; fechaFin = "2030-12-26T14:00"; motivo = "CIRUGIA" } $token).Respuesta.message
+
+# 41. Día libre justo después de las vacaciones → 201
+(Invoke-Api POST "/personal/$idVet/bloqueos" @{ fechaInicio = "2030-12-27T00:00"; fechaFin = "2030-12-28T00:00"; motivo = "DIA_LIBRE" } $token).Codigo
+
+# 42. Bloqueo que ya terminó → 400
+(Invoke-Api POST "/personal/$idVet/bloqueos" @{ fechaInicio = "2020-01-01T08:00"; fechaFin = "2020-01-02T08:00"; motivo = "PERSONAL" } $token).Respuesta.message
+
+# 43. Motivo inválido → 400 con el error del campo
+(Invoke-Api POST "/personal/$idVet/bloqueos" @{ fechaInicio = "2030-11-01T08:00"; fechaFin = "2030-11-01T14:00"; motivo = "VACACIONES" } $token).Respuesta.errors
+
+# 44. Lista de bloqueos → ordenada por fecha
+(Invoke-Api GET "/personal/$idVet/bloqueos" -Token $token).Respuesta | Select-Object motivo, fechaInicio, fechaFin
+
+# 45. Alargar las vacaciones hasta el 29 → choca con el día libre del 27 → 409
+(Invoke-Api PUT "/personal/$idVet/bloqueos/$idVac" @{ fechaInicio = "2030-12-22T00:00"; fechaFin = "2030-12-29T00:00"; motivo = "PERSONAL" } $token).Codigo
+
+# 46. Adelantar el inicio de las vacaciones al 20 → 200
+(Invoke-Api PUT "/personal/$idVet/bloqueos/$idVac" @{ fechaInicio = "2030-12-20T00:00"; fechaFin = "2030-12-27T00:00"; motivo = "PERSONAL"; notas = "Vacaciones" } $token).Respuesta.fechaInicio
+
+# 47. La veterinaria consulta sus bloqueos → 2
+$tVet = (Invoke-Api POST "/auth/login" @{ correo = "sofia.bloqueos@veterinaria.com"; password = "Inicial123" }).Respuesta.token
+(Invoke-Api GET "/personal/mi-perfil/bloqueos" -Token $tVet).Respuesta.Count
+
+# 48. La veterinaria intenta registrarse un bloqueo → 403
+(Invoke-Api POST "/personal/$idVet/bloqueos" @{ fechaInicio = "2030-10-01T08:00"; fechaFin = "2030-10-01T14:00"; motivo = "CIRUGIA" } $tVet).Codigo
+
+# 49. Cancelar las vacaciones → 204
+(Invoke-Api DELETE "/personal/$idVet/bloqueos/$idVac" -Token $token).Codigo
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 38. Alta del veterinario | `201` |
+| 39. Vacaciones | `201` |
+| 40. Cirugía encimada | `El bloqueo se encima con otro bloqueo (PERSONAL) del 2030-12-22 00:00 al 2030-12-27 00:00` |
+| 41. Día libre seguido | `201` |
+| 42. Bloqueo ya terminado | `El bloqueo ya terminó: la fecha de fin debe ser futura` |
+| 43. Motivo inválido | Columna `motivo`: `El motivo debe ser PERSONAL, CIRUGIA o DIA_LIBRE` |
+| 44. Lista | `PERSONAL 2030-12-22T00:00 → 2030-12-27T00:00` y `DIA_LIBRE 2030-12-27T00:00 → 2030-12-28T00:00` |
+| 45. Alargar hasta chocar | `409` |
+| 46. Adelantar el inicio | `2030-12-20T00:00` |
+| 47. Sus bloqueos | `2` |
+| 48. La veterinaria se registra un bloqueo | `403` |
+| 49. Cancelar | `204` |
+
 #### Borrar las cuentas de prueba
 
 Las pruebas manuales **sí guardan datos**. Para borrar una cuenta de prueba (primero su perfil de cliente, después el usuario):
@@ -393,6 +582,12 @@ Para las pruebas de roles (Ana, Beto y el cajero) hay que borrar también sus ma
 
 ```bash
 psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM antecedentes_clinicos WHERE id_mascota IN (SELECT m.id_mascota FROM mascotas m JOIN clientes c ON c.id_cliente = m.id_cliente JOIN usuarios u ON u.id_usuario = c.id_usuario WHERE u.correo LIKE '%.roles@correo.com'); DELETE FROM mascotas WHERE id_cliente IN (SELECT c.id_cliente FROM clientes c JOIN usuarios u ON u.id_usuario = c.id_usuario WHERE u.correo LIKE '%.roles@correo.com'); DELETE FROM clientes WHERE id_usuario IN (SELECT id_usuario FROM usuarios WHERE correo LIKE '%.roles@correo.com'); DELETE FROM usuarios WHERE correo LIKE '%.roles@correo.com';"
+```
+
+Para el personal de prueba basta con borrar sus usuarios: su perfil, turnos y bloqueos se borran solos (`ON DELETE CASCADE`):
+
+```bash
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com', 'sofia.bloqueos@veterinaria.com');"
 ```
 
 ## Documentación de la API (Swagger UI)
@@ -757,3 +952,213 @@ class MiControladorTest { ... }
 @WithMockUser(roles = "ADMIN")      // usuario con rol ADMIN
 void adminPuedeEliminar() { ... }
 ```
+
+## Módulo de personal (`personal`)
+
+Gestiona a los empleados de la clínica (veterinarios y cajeros), sus turnos semanales y los bloqueos de su agenda. La agenda del Sprint 3 usará estos datos para calcular los horarios libres de cada veterinario.
+
+> **Estado:** módulo completo: entidades y repositorios, alta y gestión del personal, horarios y bloqueos de agenda.
+
+### Entidades
+
+| Entidad | Tabla | Qué guarda |
+|---|---|---|
+| `Personal` | `PERSONAL` | Perfil del empleado: nombre, apellidos, teléfono, cédula profesional y especies que atiende. Está vinculado a **una** cuenta de `USUARIOS` |
+| `HorarioPersonal` | `HORARIOS_PERSONAL` | Un turno de trabajo: día de la semana, hora de inicio y hora de fin. Una persona puede tener varios turnos el mismo día |
+| `BloqueoDisponibilidad` | `BLOQUEOS_DISPONIBILIDAD` | Un periodo en que la persona no está disponible: fecha y hora de inicio y de fin, motivo y notas |
+| `MotivoBloqueo` (enum) | | `PERSONAL`, `CIRUGIA`, `DIA_LIBRE` |
+
+- **Días de la semana:** `0` = domingo, `1` = lunes … `6` = sábado, la misma numeración que `HORARIOS_CLINICA`.
+- **Correo, rol y estado activo:** vienen de la cuenta en `USUARIOS`, porque `PERSONAL` no tiene columna `activo`. Dar de baja a un empleado es desactivar su usuario, y el filtro JWT ya le impide iniciar sesión.
+- **Reglas que ya cuida la base:** un usuario solo puede tener un perfil de personal, el fin de un turno o bloqueo debe ser posterior a su inicio, y el día debe estar entre 0 y 6.
+
+### Repositorios
+
+| Repositorio | Búsquedas |
+|---|---|
+| `PersonalRepository` | Por cuenta de usuario (`findByUsuarioIdUsuario`), por correo de quien inició sesión (`findByUsuarioCorreo`), si una cuenta ya tiene perfil (`existsByUsuarioIdUsuario`), todo el personal o solo un rol, ordenados por apellidos |
+| `HorarioPersonalRepository` | Turnos de una persona (toda la semana o un día) y un turno solo si pertenece a esa persona |
+| `BloqueoDisponibilidadRepository` | Bloqueos de una persona (todos o solo los que aún no terminan), un bloqueo solo si pertenece a esa persona, y `buscarEncimados` |
+
+`buscarEncimados(idPersonal, inicio, fin)` devuelve los bloqueos de esa persona que chocan con el rango indicado. Dos rangos chocan si cada uno empieza antes de que termine el otro. Si uno termina justo cuando empieza el otro (10:00-12:00 y 12:00-14:00), **no** chocan. Lo usarán la validación de bloqueos y la agenda.
+
+### Endpoints del personal
+
+| Método y ruta | Quién | Qué hace | Respuesta |
+|---|---|---|---|
+| `POST /api/personal` | ADMIN | Da de alta a un veterinario o cajero: crea su cuenta y su perfil en una sola operación | `201` |
+| `GET /api/personal` | ADMIN | Lista al personal ordenado por apellidos. Filtros opcionales: `?rol=VETERINARIO` o `CAJERO`, `?activo=true` o `false` | `200` |
+| `GET /api/personal/{id}` | ADMIN | Detalle de un empleado | `200` / `404` |
+| `PUT /api/personal/{id}` | ADMIN | Edita nombre, apellidos, teléfono, cédula y especies | `200` |
+| `PATCH /api/personal/{id}/desactivar` | ADMIN | Desactiva su cuenta: no puede iniciar sesión y su token deja de servir. Sus datos se conservan | `204` |
+| `PATCH /api/personal/{id}/reactivar` | ADMIN | Vuelve a activar su cuenta | `200` |
+| `GET /api/personal/mi-perfil` | VETERINARIO, CAJERO | El empleado consulta **su propio** perfil, según su token | `200` / `404` |
+
+#### Alta de un empleado
+
+```http
+POST /api/personal
+Authorization: Bearer <token del ADMIN>
+Content-Type: application/json
+```
+
+```json
+{
+  "correo": "laura.zamora@veterinaria.com",
+  "password": "Inicial123",
+  "rol": "VETERINARIO",
+  "nombre": "Laura",
+  "apellidos": "Zamora Ruiz",
+  "telefono": "5551112222",
+  "cedulaProfesional": "12345678",
+  "especialidadEspecies": "Perros, Gatos"
+}
+```
+
+Respuesta `201`. El mismo formato sale en la lista, el detalle, la edición, la reactivación y `mi-perfil`:
+
+```json
+{
+  "idPersonal": 1,
+  "idUsuario": 2,
+  "correo": "laura.zamora@veterinaria.com",
+  "rol": "VETERINARIO",
+  "activo": true,
+  "nombre": "Laura",
+  "apellidos": "Zamora Ruiz",
+  "telefono": "5551112222",
+  "cedulaProfesional": "12345678",
+  "especialidadEspecies": "Perros, Gatos"
+}
+```
+
+La respuesta **nunca** incluye la contraseña. Con esa contraseña inicial, el empleado ya puede iniciar sesión en `POST /api/auth/login`.
+
+#### Reglas
+
+| Regla | Si no se cumple |
+|---|---|
+| `rol` solo puede ser `VETERINARIO` o `CAJERO`: los clientes se registran solos y el ADMIN ya existe | `400`, `errors.rol` |
+| La contraseña tiene de 8 a 72 caracteres, con al menos una letra y un número (igual que el registro). Se guarda cifrada con BCrypt | `400`, `errors.password` |
+| El correo se guarda sin espacios y en minúsculas, y no puede estar registrado | `409` `El correo ya está registrado` |
+| Un **veterinario** debe tener cédula profesional, al darlo de alta y al editarlo: identifica legalmente al médico y saldrá en las recetas. Para un cajero es opcional | `400` `La cédula profesional es obligatoria para veterinarios` |
+| Nombre, apellidos y teléfono son obligatorios. La cédula y las especies son opcionales; si llegan vacías se guardan como `null` | `400` con el error de cada campo |
+| El alta es **todo o nada**: si falla el perfil, tampoco se guarda la cuenta | |
+| La edición no cambia el correo, el rol ni la contraseña | |
+| Desactivar o reactivar dos veces seguidas no da error | |
+
+Para el frontend: el `idPersonal` es el que usarán los turnos, los bloqueos y, en el Sprint 3, las citas (`id_veterinario`).
+
+### Horarios del personal
+
+Turnos de trabajo semanales de cada empleado (por ejemplo, "lunes de 08:00 a 14:00"). En el Sprint 3 la agenda los cruzará con el horario de la clínica y los bloqueos para calcular los espacios libres de cada veterinario.
+
+| Método y ruta | Quién | Qué hace | Respuesta |
+|---|---|---|---|
+| `POST /api/personal/{id}/horarios` | ADMIN | Agrega un turno | `201` |
+| `GET /api/personal/{id}/horarios` | ADMIN | Turnos de la semana, de domingo a sábado y por hora de inicio | `200` |
+| `PUT /api/personal/{id}/horarios/{idHorario}` | ADMIN | Edita un turno | `200` |
+| `DELETE /api/personal/{id}/horarios/{idHorario}` | ADMIN | Borra un turno | `204` |
+| `GET /api/personal/mi-perfil/horarios` | VETERINARIO, CAJERO | El empleado consulta **sus** turnos, según su token | `200` |
+
+#### Agregar un turno
+
+```http
+POST /api/personal/1/horarios
+Authorization: Bearer <token del ADMIN>
+Content-Type: application/json
+```
+
+```json
+{ "diaSemana": 1, "horaInicio": "08:00", "horaFin": "14:00" }
+```
+
+Respuesta `201` (mismo formato en la lista, la edición y `mi-perfil/horarios`):
+
+```json
+{
+  "idHorario": 5,
+  "idPersonal": 1,
+  "diaSemana": 1,
+  "nombreDia": "Lunes",
+  "horaInicio": "08:00",
+  "horaFin": "14:00"
+}
+```
+
+- `diaSemana`: `0` = domingo, `1` = lunes … `6` = sábado. `nombreDia` viene ya convertido para el frontend.
+- Las horas viajan como `"HH:mm"`. Si llegan segundos (`"08:00:45"`), se descartan.
+
+#### Reglas
+
+| Regla | Si no se cumple |
+|---|---|
+| `diaSemana` va de 0 a 6 | `400`, `errors.diaSemana` |
+| `horaFin` es posterior a `horaInicio`: un turno no cruza la medianoche | `400` `La hora de fin debe ser posterior a la hora de inicio (el turno no puede cruzar la medianoche)` |
+| Los turnos de una persona en un mismo día **no se enciman**: con 08:00-14:00 no se puede agregar 12:00-18:00 | `409` `El turno se encima con el turno del Lunes de 08:00 a 14:00` |
+| Turnos seguidos sí se permiten (08:00-13:00 y 13:00-17:00), igual que varios turnos el mismo día (08:00-13:00 y 16:00-20:00) | |
+| Al editar, el turno no se compara consigo mismo (se puede alargar o mover sin conflicto) | |
+| El turno debe pertenecer al empleado de la ruta: `/personal/1/horarios/9` con un turno de otra persona responde 404 | `404` |
+| El empleado debe existir | `404` |
+
+> **Pendiente para el módulo `config-clinica`:** validar que el turno quede dentro del horario de atención de la clínica (`HORARIOS_CLINICA`). Se agregará cuando exista esa entidad.
+
+### Bloqueos de agenda
+
+Periodos en que un empleado **no está disponible** aunque le toque turno: vacaciones, una cirugía programada o un día libre. En el Sprint 3 la agenda no ofrecerá citas en esos periodos.
+
+| Método y ruta | Quién | Qué hace | Respuesta |
+|---|---|---|---|
+| `POST /api/personal/{id}/bloqueos` | ADMIN | Registra un bloqueo | `201` |
+| `GET /api/personal/{id}/bloqueos` | ADMIN | Bloqueos vigentes y futuros, ordenados por fecha de inicio. Con `?incluirPasados=true` incluye también los que ya terminaron | `200` |
+| `PUT /api/personal/{id}/bloqueos/{idBloqueo}` | ADMIN | Edita un bloqueo que aún no termina | `200` |
+| `DELETE /api/personal/{id}/bloqueos/{idBloqueo}` | ADMIN | Cancela un bloqueo que aún no termina | `204` |
+| `GET /api/personal/mi-perfil/bloqueos` | VETERINARIO, CAJERO | El empleado consulta **sus** bloqueos (acepta `?incluirPasados=true`) | `200` |
+
+#### Registrar un bloqueo
+
+```http
+POST /api/personal/1/bloqueos
+Authorization: Bearer <token del ADMIN>
+Content-Type: application/json
+```
+
+```json
+{
+  "fechaInicio": "2026-12-22T00:00",
+  "fechaFin": "2026-12-27T00:00",
+  "motivo": "PERSONAL",
+  "notas": "Vacaciones de fin de año"
+}
+```
+
+Respuesta `201` (mismo formato en la lista, la edición y `mi-perfil/bloqueos`):
+
+```json
+{
+  "idBloqueo": 3,
+  "idPersonal": 1,
+  "fechaInicio": "2026-12-22T00:00",
+  "fechaFin": "2026-12-27T00:00",
+  "motivo": "PERSONAL",
+  "notas": "Vacaciones de fin de año"
+}
+```
+
+- `motivo`: `PERSONAL` (permiso o vacaciones), `CIRUGIA` (cirugía programada) o `DIA_LIBRE`.
+- Las fechas viajan como `"yyyy-MM-ddTHH:mm"`. Si llegan segundos, se descartan.
+
+#### Reglas
+
+| Regla | Si no se cumple |
+|---|---|
+| `motivo` es `PERSONAL`, `CIRUGIA` o `DIA_LIBRE` | `400`, `errors.motivo` |
+| `fechaFin` es posterior a `fechaInicio` | `400` `La fecha de fin debe ser posterior a la fecha de inicio` |
+| `fechaFin` es **futura**: no se registran bloqueos que ya terminaron. `fechaInicio` sí puede ser de hace un rato (una ausencia que empezó en la mañana) | `400` `El bloqueo ya terminó: la fecha de fin debe ser futura` |
+| Los bloqueos de una persona **no se enciman**. Bloqueos seguidos sí se permiten (uno termina el día 27 a las 00:00 y otro empieza a esa hora) | `409` `El bloqueo se encima con otro bloqueo (PERSONAL) del 2026-12-22 00:00 al 2026-12-27 00:00` |
+| Un bloqueo que **ya terminó** queda como historial: no se edita ni se borra | `400` `Un bloqueo que ya terminó no se puede editar ni borrar` |
+| Al editar, el bloqueo no se compara consigo mismo | |
+| `notas` es opcional, de máximo 255 caracteres | `400`, `errors.notas` |
+| El bloqueo debe pertenecer al empleado de la ruta, y el empleado debe existir | `404` |
+
+> **Pendiente para el Sprint 3 (agenda):** cuando existan las citas, decidir qué pasa si se bloquea un periodo en el que el veterinario ya tiene citas agendadas (avisar o impedirlo).

@@ -141,8 +141,8 @@ public class AuthService {
                 .build();
     }
 
-    /** Los correos se guardan y se comparan sin espacios y en minúsculas. */
-    private String normalizarCorreo(String correo) {
+    /** Los correos se guardan y se comparan sin espacios y en minúsculas. También lo usa el módulo de personal. */
+    public static String normalizarCorreo(String correo) {
         return correo.trim().toLowerCase(Locale.ROOT);
     }
 }
