@@ -201,7 +201,7 @@ export DB_PASSWORD="tu_contraseña"
 Si todo sale bien, al final aparece:
 
 ```
-[INFO] Tests run: 176, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 184, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -227,7 +227,7 @@ Si todo sale bien, al final aparece:
 | `agenda.controller.HorarioClinicaControllerTest` | 19 | Horario de la clínica: consulta por cualquier rol con sesión, 401 sin sesión, guardado sin segundos, reenvío tal cual del `GET`, semana incompleta o con día repetido, día fuera de rango, campos faltantes, cierre antes de la apertura, hora inválida, turnos que quedarían fuera (409, no se guarda nada, lista de varios, más de diez) y permisos por rol |
 | `agenda.repository.ConfigClinicaRepositoryTest` | 12 | Horario de la clínica, tipos de consultorio y consultorios contra la base: datos iniciales, búsquedas sin importar mayúsculas, filtros por tipo y activos, conteo de consultorios activos y reglas de la base (día repetido, cierre antes de la apertura, nombre de tipo repetido, consultorio sin tipo) |
 | `personal.controller.BloqueoDisponibilidadControllerTest` | 18 | Bloqueos: alta con fechas sin segundos, ausencia que ya empezó, lista sin terminados salvo `incluirPasados`, motivo inválido, fin antes del inicio, bloqueo ya terminado, bloqueos encimados (409), seguidos permitidos, edición, borrado, historial intocable, bloqueo de otra persona (404) y permisos por rol |
-| `personal.controller.HorarioPersonalControllerTest` | 17 | Turnos: alta con nombre del día y formato `HH:mm`, orden, segundos descartados, día fuera de rango, fin antes del inicio, turnos encimados (409), turnos seguidos permitidos, edición sin chocar consigo mismo, borrado, turno de otra persona (404) y permisos por rol |
+| `personal.controller.HorarioPersonalControllerTest` | 25 | Turnos: alta con nombre del día y formato `HH:mm`, orden, segundos descartados, día fuera de rango, fin antes del inicio, turnos encimados (409), turnos seguidos permitidos, turnos fuera del horario de la clínica o en un día cerrado (409), turno que coincide exactamente con el horario, edición (sin chocar consigo mismo y hacia fuera del horario), borrado, turno de otra persona (404) y permisos por rol |
 | `personal.service.PersonalAltaTransaccionTest` | 1 | Si falla el perfil de personal, tampoco se guarda la cuenta |
 | `personal.repository.PersonalRepositoryTest` | 12 | Entidades de personal, turnos y bloqueos contra la base: vínculo con el usuario, filtros por rol, orden, bloqueos encimados y reglas de la base |
 
@@ -672,6 +672,53 @@ $tVet = (Invoke-Api POST "/auth/login" @{ correo = "marta.clinica@veterinaria.co
 | 63. La veterinaria | `200` al consultar, `403` al modificar |
 | 64. Restablecer | `200` y el horario como estaba al inicio |
 
+#### Turnos dentro del horario de la clínica
+
+Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1. Con el horario original: domingo de 09:00 a 14:00, lunes a viernes de 08:00 a 20:00 y sábado de 08:00 a 18:00.
+
+```powershell
+# 65. Alta de una veterinaria para las pruebas → 201
+$alta = Invoke-Api POST "/personal" @{ correo = "nora.turnos@veterinaria.com"; password = "Inicial123"; rol = "VETERINARIO"; nombre = "Nora"; apellidos = "Turnos"; telefono = "5557778888"; cedulaProfesional = "99887766" } $token
+$alta.Codigo
+$idVet = $alta.Respuesta.idPersonal
+
+# 66. Turno del domingo que empieza antes de que abra la clínica (08:00-12:00) → 409
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 0; horaInicio = "08:00"; horaFin = "12:00" } $token).Respuesta.message
+
+# 67. Turno del sábado que termina después del cierre (10:00-19:00) → 409
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 6; horaInicio = "10:00"; horaFin = "19:00" } $token).Respuesta.message
+
+# 68. Turno que coincide exactamente con el horario del domingo (09:00-14:00) → 201
+$turno = Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 0; horaInicio = "09:00"; horaFin = "14:00" } $token
+$turno.Codigo
+$idTurno = $turno.Respuesta.idHorario
+
+# 69. Editar ese turno para que empiece a las 08:00 (antes de abrir) → 409; a las 10:00 → 200
+(Invoke-Api PUT "/personal/$idVet/horarios/$idTurno" @{ diaSemana = 0; horaInicio = "08:00"; horaFin = "14:00" } $token).Codigo
+(Invoke-Api PUT "/personal/$idVet/horarios/$idTurno" @{ diaSemana = 0; horaInicio = "10:00"; horaFin = "14:00" } $token).Codigo
+
+# 70. Dejar el domingo como no laborable → 409 por el turno de Nora (Parte "Horario de la clínica");
+#     se borra el turno, se cierra el domingo → 200, y ya no se puede asignar un turno ese día → 409
+$original = (Invoke-Api GET "/config/horarios-clinica" -Token $token).Respuesta
+$domingoCerrado = $original | ForEach-Object { $d = $_.PSObject.Copy(); if ($d.diaSemana -eq 0) { $d.laborable = $false }; $d }
+(Invoke-Api PUT "/config/horarios-clinica" $domingoCerrado $token).Codigo
+(Invoke-Api DELETE "/personal/$idVet/horarios/$idTurno" -Token $token).Codigo
+(Invoke-Api PUT "/config/horarios-clinica" $domingoCerrado $token).Codigo
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 0; horaInicio = "09:00"; horaFin = "12:00" } $token).Respuesta.message
+
+# Restablecer el horario original → 200
+(Invoke-Api PUT "/config/horarios-clinica" $original $token).Codigo
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 65. Alta de la veterinaria | `201` |
+| 66. Empieza antes de la apertura | `El turno queda fuera del horario de la clínica del Domingo (09:00 a 14:00)` |
+| 67. Termina después del cierre | `El turno queda fuera del horario de la clínica del Sábado (08:00 a 18:00)` |
+| 68. Coincide con el horario | `201` |
+| 69. Editar hacia fuera / dentro | `409`, `200` |
+| 70. Cerrar el domingo | `409` (hay un turno), `204` (se borra), `200` (se cierra), `La clínica no abre el Domingo: no se puede asignar un turno ese día`, y `200` al restablecer |
+
 #### Borrar las cuentas de prueba
 
 Las pruebas manuales **sí guardan datos**. Para borrar una cuenta de prueba (primero su perfil de cliente, después el usuario):
@@ -695,7 +742,7 @@ psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM clientes
 Para el personal de prueba basta con borrar sus usuarios: su perfil, turnos y bloqueos se borran solos (`ON DELETE CASCADE`):
 
 ```bash
-psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com', 'sofia.bloqueos@veterinaria.com', 'caja.me@veterinaria.com', 'marta.clinica@veterinaria.com');"
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com', 'sofia.bloqueos@veterinaria.com', 'caja.me@veterinaria.com', 'marta.clinica@veterinaria.com', 'nora.turnos@veterinaria.com');"
 ```
 
 ## Documentación de la API (Swagger UI)
@@ -1253,13 +1300,15 @@ Respuesta `201` (mismo formato en la lista, la edición y `mi-perfil/horarios`):
 |---|---|
 | `diaSemana` va de 0 a 6 | `400`, `errors.diaSemana` |
 | `horaFin` es posterior a `horaInicio`: un turno no cruza la medianoche | `400` `La hora de fin debe ser posterior a la hora de inicio (el turno no puede cruzar la medianoche)` |
+| El turno cae en un día en que la clínica abre ([horario de la clínica](#horario-de-la-clínica)) | `409` `La clínica no abre el Domingo: no se puede asignar un turno ese día` |
+| El turno cabe en el horario de la clínica de ese día. Un turno que coincide exactamente con la apertura y el cierre sí cabe | `409` `El turno queda fuera del horario de la clínica del Sábado (08:00 a 18:00)` |
 | Los turnos de una persona en un mismo día **no se enciman**: con 08:00-14:00 no se puede agregar 12:00-18:00 | `409` `El turno se encima con el turno del Lunes de 08:00 a 14:00` |
 | Turnos seguidos sí se permiten (08:00-13:00 y 13:00-17:00), igual que varios turnos el mismo día (08:00-13:00 y 16:00-20:00) | |
 | Al editar, el turno no se compara consigo mismo (se puede alargar o mover sin conflicto) | |
 | El turno debe pertenecer al empleado de la ruta: `/personal/1/horarios/9` con un turno de otra persona responde 404 | `404` |
 | El empleado debe existir | `404` |
 
-> **Pendiente para el módulo `config-clinica`:** validar que el turno quede dentro del horario de atención de la clínica (`HORARIOS_CLINICA`). Se agregará cuando exista esa entidad.
+> Las reglas de horario de la clínica se aplican al **agregar y al editar** un turno, después de revisar el rango y antes de revisar el choque con otros turnos. El sentido contrario (cambiar el horario de la clínica) lo cubre [Horario de la clínica](#horario-de-la-clínica): no se guarda si algún turno quedaría fuera. Así ningún turno puede quedar fuera del horario de atención.
 
 ### Bloqueos de agenda
 
@@ -1413,5 +1462,4 @@ Ejemplo: el sábado pasa a cerrar a las 14:00 y Laura tiene turno de 10:00 a 18:
 - Para resolverlo, el ADMIN ajusta o borra primero esos turnos (`PUT` o `DELETE /api/personal/{id}/horarios/{idHorario}`) y vuelve a guardar el horario.
 - Guardar el mismo horario dos veces seguidas no da error.
 
-> **Pendiente (siguiente parte):** validar también el sentido contrario: que al agregar o editar un turno del personal quede dentro del horario de la clínica.
 > **Pendiente (Sprint 3):** qué hacer con las citas ya agendadas en horas que dejen de ser laborables.
