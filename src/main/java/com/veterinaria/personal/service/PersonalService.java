@@ -18,6 +18,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Lógica del personal de la clínica: alta, consulta, edición y activación de veterinarios y
@@ -162,6 +163,14 @@ public class PersonalService {
     public Personal buscarOError(Integer idPersonal) {
         return personalRepository.findById(idPersonal)
                 .orElseThrow(() -> new ResourceNotFoundException("Personal no encontrado con id " + idPersonal));
+    }
+
+    /**
+     * Perfil de personal vinculado a una cuenta, si lo tiene. Lo usa {@code GET /api/auth/me}.
+     */
+    @Transactional(readOnly = true)
+    public Optional<PersonalResponseDTO> buscarPerfilPorIdUsuario(Integer idUsuario) {
+        return personalRepository.findByUsuarioIdUsuario(idUsuario).map(this::mapear);
     }
 
     /**

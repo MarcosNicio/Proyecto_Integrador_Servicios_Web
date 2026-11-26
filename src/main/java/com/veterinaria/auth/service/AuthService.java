@@ -2,6 +2,7 @@ package com.veterinaria.auth.service;
 
 import com.veterinaria.auth.dto.AuthResponse;
 import com.veterinaria.auth.dto.LoginRequest;
+import com.veterinaria.auth.dto.MeResponse;
 import com.veterinaria.auth.dto.RegistroRequest;
 import com.veterinaria.auth.dto.RegistroResponse;
 import com.veterinaria.auth.entity.Rol;
@@ -9,11 +10,15 @@ import com.veterinaria.auth.entity.Usuario;
 import com.veterinaria.auth.repository.UsuarioRepository;
 import com.veterinaria.clientes.dto.ClienteRequestDTO;
 import com.veterinaria.clientes.dto.ClienteResponseDTO;
+import com.veterinaria.clientes.repository.ClienteRepository;
 import com.veterinaria.clientes.service.ClienteService;
 import com.veterinaria.common.exception.ConflictException;
 import com.veterinaria.common.exception.ForbiddenException;
 import com.veterinaria.common.exception.UnauthorizedException;
+import com.veterinaria.common.security.SecurityErrorWriter;
 import com.veterinaria.common.util.JwtUtil;
+import com.veterinaria.personal.dto.PersonalResponseDTO;
+import com.veterinaria.personal.service.PersonalService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,6 +43,8 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtUtil jwtUtil;
     private final ClienteService clienteService;
+    private final ClienteRepository clienteRepository;
+    private final PersonalService personalService;
 
     /**
      * Hash BCrypt de un valor aleatorio, generado al arrancar. Se compara contra él cuando el
@@ -46,12 +53,49 @@ public class AuthService {
     private final String hashFicticio;
 
     public AuthService(UsuarioRepository usuarioRepository, PasswordEncoder passwordEncoder,
-                       JwtUtil jwtUtil, ClienteService clienteService) {
+                       JwtUtil jwtUtil, ClienteService clienteService,
+                       ClienteRepository clienteRepository, PersonalService personalService) {
         this.usuarioRepository = usuarioRepository;
         this.passwordEncoder = passwordEncoder;
         this.jwtUtil = jwtUtil;
         this.clienteService = clienteService;
+        this.clienteRepository = clienteRepository;
+        this.personalService = personalService;
         this.hashFicticio = passwordEncoder.encode(UUID.randomUUID().toString());
+    }
+
+    /**
+     * Datos de quien inició sesión, a partir del correo de su token: su cuenta y, según su rol,
+     * su perfil de cliente (CLIENTE) o de personal (VETERINARIO, CAJERO). El ADMIN no tiene perfil.
+     * <p>
+     * Sirve para que el frontend, justo después del login, obtenga el {@code idCliente} o el
+     * {@code idPersonal} que necesitan los demás endpoints. Si la cuenta no tiene perfil (por
+     * ejemplo, un cliente cuyo perfil se borró), ese campo llega en {@code null}.
+     * <p>
+     * El filtro JWT ya garantiza que la cuenta existe y está activa; si no, la petición recibe
+     * 401 antes de llegar aquí.
+     */
+    @Transactional(readOnly = true)
+    public MeResponse obtenerUsuarioActual(String correo) {
+        Usuario usuario = usuarioRepository.findByCorreo(correo)
+                .orElseThrow(() -> new UnauthorizedException(SecurityErrorWriter.MENSAJE_USUARIO_INACTIVO));
+
+        ClienteResponseDTO cliente = null;
+        PersonalResponseDTO personal = null;
+        if (usuario.getRol() == Rol.CLIENTE && clienteRepository.existsByIdUsuario(usuario.getIdUsuario())) {
+            cliente = clienteService.obtenerPorIdUsuario(usuario.getIdUsuario());
+        } else if (usuario.getRol() == Rol.VETERINARIO || usuario.getRol() == Rol.CAJERO) {
+            personal = personalService.buscarPerfilPorIdUsuario(usuario.getIdUsuario()).orElse(null);
+        }
+
+        return MeResponse.builder()
+                .idUsuario(usuario.getIdUsuario())
+                .correo(usuario.getCorreo())
+                .rol(usuario.getRol())
+                .activo(usuario.getActivo())
+                .cliente(cliente)
+                .personal(personal)
+                .build();
     }
 
     /**

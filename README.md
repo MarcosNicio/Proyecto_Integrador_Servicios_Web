@@ -201,7 +201,7 @@ export DB_PASSWORD="tu_contraseña"
 Si todo sale bien, al final aparece:
 
 ```
-[INFO] Tests run: 136, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 145, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -220,6 +220,7 @@ Si todo sale bien, al final aparece:
 | `common.security.JwtAuthenticationFilterTest` | 13 | El filtro JWT: token válido, ausente, inventado, falsificado o vencido, usuario desactivado, roles (401/403) |
 | `auth.repository.UsuarioRepositoryTest` | 3 | El repositorio de usuarios contra la base |
 | `auth.controller.AuthControllerTest` | 10 | Login: credenciales correctas e incorrectas, cuenta desactivada, validaciones y uso del token |
+| `auth.controller.AuthMeTest` | 9 | `GET /api/auth/me` con tokens reales: perfil de cliente después del login, perfil de personal (veterinario y cajero), admin sin perfil, cuenta sin perfil, sin token, token inválido y cuenta desactivada (401), y login y registro siguen públicos |
 | `auth.controller.AuthRegistroTest` | 13 | Registro: crea usuario y cliente vinculados, contraseña cifrada, token, login posterior, correo repetido y contraseñas débiles |
 | `auth.service.AuthRegistroTransaccionTest` | 1 | Si falla la creación del cliente, tampoco se guarda el usuario |
 | `personal.controller.PersonalControllerTest` | 19 | Personal: alta de veterinario y cajero, login del empleado nuevo, correo normalizado y repetido, cédula obligatoria, roles no permitidos, filtros, edición, desactivar/reactivar y permisos por rol |
@@ -570,6 +571,42 @@ $tVet = (Invoke-Api POST "/auth/login" @{ correo = "sofia.bloqueos@veterinaria.c
 | 48. La veterinaria se registra un bloqueo | `403` |
 | 49. Cancelar | `204` |
 
+#### Usuario que inició sesión (`/me`)
+
+Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1.
+
+```powershell
+# 50. Admin → 200, rol ADMIN y sin perfiles
+$me = Invoke-Api GET "/auth/me" -Token $token
+$me.Codigo
+$me.Respuesta | Select-Object correo, rol, cliente, personal
+
+# 51. Sin token → 401 (aunque esté dentro de /api/auth)
+(Invoke-Api GET "/auth/me").Codigo
+
+# 52. Un cliente se registra, vuelve a iniciar sesión y obtiene su idCliente → número
+$null = Invoke-Api POST "/auth/registro" @{ correo = "ana.me@correo.com"; password = "MiClave123"; nombre = "Ana"; apellidos = "Me"; telefono = "5551230000" }
+$tCliente = (Invoke-Api POST "/auth/login" @{ correo = "ana.me@correo.com"; password = "MiClave123" }).Respuesta.token
+$meCliente = (Invoke-Api GET "/auth/me" -Token $tCliente).Respuesta
+$meCliente.cliente.idCliente
+
+# 53. Con ese idCliente consulta sus mascotas → 200
+(Invoke-Api GET "/mascotas/cliente/$($meCliente.cliente.idCliente)" -Token $tCliente).Codigo
+
+# 54. Un cajero obtiene su idPersonal → número
+$null = Invoke-Api POST "/personal" @{ correo = "caja.me@veterinaria.com"; password = "Inicial123"; rol = "CAJERO"; nombre = "Pedro"; apellidos = "Me"; telefono = "5553330000" } $token
+$tCajero = (Invoke-Api POST "/auth/login" @{ correo = "caja.me@veterinaria.com"; password = "Inicial123" }).Respuesta.token
+(Invoke-Api GET "/auth/me" -Token $tCajero).Respuesta.personal.idPersonal
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 50. Admin | `200`, `ADMIN`, `cliente` y `personal` vacíos |
+| 51. Sin token | `401` |
+| 52. Cliente después del login | Un número (su `idCliente`) |
+| 53. Sus mascotas con ese id | `200` |
+| 54. Cajero | Un número (su `idPersonal`) |
+
 #### Borrar las cuentas de prueba
 
 Las pruebas manuales **sí guardan datos**. Para borrar una cuenta de prueba (primero su perfil de cliente, después el usuario):
@@ -584,10 +621,16 @@ Para las pruebas de roles (Ana, Beto y el cajero) hay que borrar también sus ma
 psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM antecedentes_clinicos WHERE id_mascota IN (SELECT m.id_mascota FROM mascotas m JOIN clientes c ON c.id_cliente = m.id_cliente JOIN usuarios u ON u.id_usuario = c.id_usuario WHERE u.correo LIKE '%.roles@correo.com'); DELETE FROM mascotas WHERE id_cliente IN (SELECT c.id_cliente FROM clientes c JOIN usuarios u ON u.id_usuario = c.id_usuario WHERE u.correo LIKE '%.roles@correo.com'); DELETE FROM clientes WHERE id_usuario IN (SELECT id_usuario FROM usuarios WHERE correo LIKE '%.roles@correo.com'); DELETE FROM usuarios WHERE correo LIKE '%.roles@correo.com';"
 ```
 
+Para el cliente de la prueba de `/me`:
+
+```bash
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM clientes WHERE id_usuario = (SELECT id_usuario FROM usuarios WHERE correo = 'ana.me@correo.com'); DELETE FROM usuarios WHERE correo = 'ana.me@correo.com';"
+```
+
 Para el personal de prueba basta con borrar sus usuarios: su perfil, turnos y bloqueos se borran solos (`ON DELETE CASCADE`):
 
 ```bash
-psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com', 'sofia.bloqueos@veterinaria.com');"
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com', 'sofia.bloqueos@veterinaria.com', 'caja.me@veterinaria.com');"
 ```
 
 ## Documentación de la API (Swagger UI)
@@ -850,6 +893,55 @@ Responde **201**:
 
 > **Folios:** los números de folio pueden saltarse (por ejemplo, de `CLI-0003` a `CLI-0009`). Es normal: PostgreSQL no reutiliza los ids de registros que se deshicieron, como los de las pruebas automáticas.
 
+### Usuario que inició sesión: `GET /api/auth/me`
+
+Devuelve la cuenta del token y su perfil según el rol. El frontend lo llama **justo después del login**: el login solo devuelve el correo y el rol, y aquí obtiene el `idCliente` o el `idPersonal` que necesitan los demás endpoints (por ejemplo, `GET /api/mascotas/cliente/{idCliente}` para "Mis mascotas").
+
+```http
+GET /api/auth/me
+Authorization: Bearer <token>
+```
+
+Respuesta `200` de un **cliente**:
+
+```json
+{
+  "idUsuario": 5,
+  "correo": "ana.lopez@correo.com",
+  "rol": "CLIENTE",
+  "activo": true,
+  "cliente": {
+    "idCliente": 3,
+    "codigoCliente": "CLI-0003",
+    "idUsuario": 5,
+    "nombre": "Ana",
+    "apellidos": "López Pérez",
+    "telefono": "5551234567",
+    "direccion": null,
+    "responsivaUrl": null,
+    "responsablesExtra": [],
+    "mascotas": []
+  },
+  "personal": null
+}
+```
+
+| Rol | `cliente` | `personal` |
+|---|---|---|
+| `CLIENTE` | Su perfil de cliente (el mismo formato que `GET /api/clientes/{id}`) | `null` |
+| `VETERINARIO`, `CAJERO` | `null` | Su perfil de personal (el mismo formato que `GET /api/personal/{id}`) |
+| `ADMIN` | `null` | `null` |
+
+- Si la cuenta no tiene perfil (por ejemplo, un cliente cuyo perfil se borró), ese campo llega en `null` en lugar de dar error.
+- Nunca incluye la contraseña.
+
+| Situación | Respuesta |
+|---|---|
+| Token válido de una cuenta activa | `200` |
+| Sin token | `401` `Se requiere iniciar sesión para acceder a este recurso` |
+| Token alterado o vencido | `401` `El token es inválido o ha expirado` |
+| La cuenta se desactivó después del login | `401` `El usuario no existe o está desactivado` |
+
 ### Seguridad (Spring Security)
 
 La configuración está en `common/security/SecurityConfig.java`. Spring Security revisa cada petición **antes** de que llegue a los controladores:
@@ -857,6 +949,7 @@ La configuración está en `common/security/SecurityConfig.java`. Spring Securit
 | Regla | Detalle |
 |---|---|
 | Rutas públicas (sin token) | `/api/auth/**` (login y registro) y Swagger (`/swagger-ui/**`, `/v3/api-docs/**`) |
+| Excepción | `/api/auth/me` **sí** requiere token. La regla va antes que las rutas públicas, porque Spring aplica la primera que coincide |
 | Resto de la API | Requiere un token JWT válido |
 | Sesiones | No se usan (*stateless*): cada petición trae su token JWT |
 | CSRF | Desactivado: solo aplica a sesiones con cookies, y aquí el token va en el header |
