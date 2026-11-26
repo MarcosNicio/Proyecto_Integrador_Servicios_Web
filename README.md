@@ -201,7 +201,7 @@ export DB_PASSWORD="tu_contraseña"
 Si todo sale bien, al final aparece:
 
 ```
-[INFO] Tests run: 69, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 81, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -222,6 +222,7 @@ Si todo sale bien, al final aparece:
 | `auth.controller.AuthControllerTest` | 10 | Login: credenciales correctas e incorrectas, cuenta desactivada, validaciones y uso del token |
 | `auth.controller.AuthRegistroTest` | 13 | Registro: crea usuario y cliente vinculados, contraseña cifrada, token, login posterior, correo repetido y contraseñas débiles |
 | `auth.service.AuthRegistroTransaccionTest` | 1 | Si falla la creación del cliente, tampoco se guarda el usuario |
+| `personal.repository.PersonalRepositoryTest` | 12 | Entidades de personal, turnos y bloqueos contra la base: vínculo con el usuario, filtros por rol, orden, bloqueos encimados y reglas de la base |
 
 #### Si algo falla
 
@@ -757,3 +758,32 @@ class MiControladorTest { ... }
 @WithMockUser(roles = "ADMIN")      // usuario con rol ADMIN
 void adminPuedeEliminar() { ... }
 ```
+
+## Módulo de personal (`personal`)
+
+Gestiona a los empleados de la clínica (veterinarios y cajeros), sus turnos semanales y los bloqueos de su agenda. La agenda del Sprint 3 usará estos datos para calcular los horarios libres de cada veterinario.
+
+> **Estado:** Parte 1 lista (entidades y repositorios). Los endpoints (`/api/personal`, horarios y bloqueos) llegan en las siguientes partes.
+
+### Entidades
+
+| Entidad | Tabla | Qué guarda |
+|---|---|---|
+| `Personal` | `PERSONAL` | Perfil del empleado: nombre, apellidos, teléfono, cédula profesional y especies que atiende. Está vinculado a **una** cuenta de `USUARIOS` |
+| `HorarioPersonal` | `HORARIOS_PERSONAL` | Un turno de trabajo: día de la semana, hora de inicio y hora de fin. Una persona puede tener varios turnos el mismo día |
+| `BloqueoDisponibilidad` | `BLOQUEOS_DISPONIBILIDAD` | Un periodo en que la persona no está disponible: fecha y hora de inicio y de fin, motivo y notas |
+| `MotivoBloqueo` (enum) | | `PERSONAL`, `CIRUGIA`, `DIA_LIBRE` |
+
+- **Días de la semana:** `0` = domingo, `1` = lunes … `6` = sábado, la misma numeración que `HORARIOS_CLINICA`.
+- **Correo, rol y estado activo:** vienen de la cuenta en `USUARIOS`, porque `PERSONAL` no tiene columna `activo`. Dar de baja a un empleado es desactivar su usuario, y el filtro JWT ya le impide iniciar sesión.
+- **Reglas que ya cuida la base:** un usuario solo puede tener un perfil de personal, el fin de un turno o bloqueo debe ser posterior a su inicio, y el día debe estar entre 0 y 6.
+
+### Repositorios
+
+| Repositorio | Búsquedas |
+|---|---|
+| `PersonalRepository` | Por cuenta de usuario (`findByUsuarioIdUsuario`), por correo de quien inició sesión (`findByUsuarioCorreo`), si una cuenta ya tiene perfil (`existsByUsuarioIdUsuario`), todo el personal o solo un rol, ordenados por apellidos |
+| `HorarioPersonalRepository` | Turnos de una persona (toda la semana o un día) y un turno solo si pertenece a esa persona |
+| `BloqueoDisponibilidadRepository` | Bloqueos de una persona (todos o solo los que aún no terminan), un bloqueo solo si pertenece a esa persona, y `buscarEncimados` |
+
+`buscarEncimados(idPersonal, inicio, fin)` devuelve los bloqueos de esa persona que chocan con el rango indicado. Dos rangos chocan si cada uno empieza antes de que termine el otro. Si uno termina justo cuando empieza el otro (10:00-12:00 y 12:00-14:00), **no** chocan. Lo usarán la validación de bloqueos y la agenda.
