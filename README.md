@@ -201,7 +201,7 @@ export DB_PASSWORD="tu_contraseña"
 Si todo sale bien, al final aparece:
 
 ```
-[INFO] Tests run: 184, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 211, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -224,6 +224,8 @@ Si todo sale bien, al final aparece:
 | `auth.controller.AuthRegistroTest` | 13 | Registro: crea usuario y cliente vinculados, contraseña cifrada, token, login posterior, correo repetido y contraseñas débiles |
 | `auth.service.AuthRegistroTransaccionTest` | 1 | Si falla la creación del cliente, tampoco se guarda el usuario |
 | `personal.controller.PersonalControllerTest` | 19 | Personal: alta de veterinario y cajero, login del empleado nuevo, correo normalizado y repetido, cédula obligatoria, roles no permitidos, filtros, edición, desactivar/reactivar y permisos por rol |
+| `agenda.controller.ConsultorioControllerTest` | 15 | Consultorios: lista inicial y filtros por tipo y estado, detalle con nombre del tipo y 404, alta con nombre normalizado, nombre repetido (409), tipo inexistente (404) o desactivado (400), validaciones, edición (cambio de tipo, conservar el propio nombre, tipo desactivado), desactivar y reactivar, reactivar con el tipo desactivado (409) y permisos por rol |
+| `agenda.controller.TipoConsultorioControllerTest` | 12 | Tipos de consultorio: lista con conteo de consultorios activos y filtro por estado, alta, nombre repetido (409), validaciones, edición, desactivar un tipo (409 si tiene consultorios activos), reactivar, el tipo desactivado deja de pasar la consulta del módulo de servicios y permisos por rol |
 | `agenda.controller.HorarioClinicaControllerTest` | 19 | Horario de la clínica: consulta por cualquier rol con sesión, 401 sin sesión, guardado sin segundos, reenvío tal cual del `GET`, semana incompleta o con día repetido, día fuera de rango, campos faltantes, cierre antes de la apertura, hora inválida, turnos que quedarían fuera (409, no se guarda nada, lista de varios, más de diez) y permisos por rol |
 | `agenda.repository.ConfigClinicaRepositoryTest` | 12 | Horario de la clínica, tipos de consultorio y consultorios contra la base: datos iniciales, búsquedas sin importar mayúsculas, filtros por tipo y activos, conteo de consultorios activos y reglas de la base (día repetido, cierre antes de la apertura, nombre de tipo repetido, consultorio sin tipo) |
 | `personal.controller.BloqueoDisponibilidadControllerTest` | 18 | Bloqueos: alta con fechas sin segundos, ausencia que ya empezó, lista sin terminados salvo `incluirPasados`, motivo inválido, fin antes del inicio, bloqueo ya terminado, bloqueos encimados (409), seguidos permitidos, edición, borrado, historial intocable, bloqueo de otra persona (404) y permisos por rol |
@@ -719,6 +721,62 @@ $domingoCerrado = $original | ForEach-Object { $d = $_.PSObject.Copy(); if ($d.d
 | 69. Editar hacia fuera / dentro | `409`, `200` |
 | 70. Cerrar el domingo | `409` (hay un turno), `204` (se borra), `200` (se cierra), `La clínica no abre el Domingo: no se puede asignar un turno ese día`, y `200` al restablecer |
 
+#### Tipos de consultorio y consultorios
+
+Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1. Los datos de prueba terminan en "Manual" para borrarlos al final.
+
+```powershell
+# 71. Listar los tipos → Consulta (2 consultorios activos), Cirugía (1) y Estética (1)
+(Invoke-Api GET "/consultorios/tipos" -Token $token).Respuesta | Select-Object idTipoConsultorio, nombre, activo, consultoriosActivos
+
+# 72. Crear un tipo → 201; el mismo nombre con otras mayúsculas y espacios → 409
+$tipo = Invoke-Api POST "/consultorios/tipos" @{ nombre = "Rayos X Manual"; descripcion = "Diagnóstico por imagen" } $token
+$tipo.Codigo
+$idTipo = $tipo.Respuesta.idTipoConsultorio
+(Invoke-Api POST "/consultorios/tipos" @{ nombre = " rayos x MANUAL " } $token).Respuesta.message
+
+# 73. Crear un consultorio de ese tipo → 201 con el nombre del tipo; nombre repetido → 409; tipo inexistente → 404
+$sala = Invoke-Api POST "/consultorios" @{ nombre = "Sala RX Manual"; idTipoConsultorio = $idTipo } $token
+$sala.Codigo
+$sala.Respuesta.nombreTipo
+$idSala = $sala.Respuesta.idConsultorio
+(Invoke-Api POST "/consultorios" @{ nombre = "sala rx manual"; idTipoConsultorio = $idTipo } $token).Respuesta.message
+(Invoke-Api POST "/consultorios" @{ nombre = "Otra sala Manual"; idTipoConsultorio = 999999 } $token).Codigo
+
+# 74. Filtrar los consultorios por tipo → solo la sala nueva
+(Invoke-Api GET "/consultorios?idTipo=$idTipo" -Token $token).Respuesta | Select-Object nombre, nombreTipo, activo
+
+# 75. Desactivar el tipo con un consultorio activo → 409; desactivar la sala → 204; ahora el tipo → 204
+(Invoke-Api PATCH "/consultorios/tipos/$idTipo/desactivar" -Token $token).Respuesta.message
+(Invoke-Api PATCH "/consultorios/$idSala/desactivar" -Token $token).Codigo
+(Invoke-Api PATCH "/consultorios/tipos/$idTipo/desactivar" -Token $token).Codigo
+
+# 76. Con el tipo desactivado no se crea otra sala (400) ni se reactiva la sala (409)
+(Invoke-Api POST "/consultorios" @{ nombre = "Sala RX 2 Manual"; idTipoConsultorio = $idTipo } $token).Respuesta.message
+(Invoke-Api PATCH "/consultorios/$idSala/reactivar" -Token $token).Respuesta.message
+
+# 77. Reactivar el tipo (200) y después la sala (200)
+(Invoke-Api PATCH "/consultorios/tipos/$idTipo/reactivar" -Token $token).Codigo
+(Invoke-Api PATCH "/consultorios/$idSala/reactivar" -Token $token).Codigo
+
+# 78. Un cajero consulta los consultorios (200) pero no puede crear (403)
+$null = Invoke-Api POST "/personal" @{ correo = "ines.consultorios@veterinaria.com"; password = "Inicial123"; rol = "CAJERO"; nombre = "Inés"; apellidos = "Consultorios"; telefono = "5552221111" } $token
+$tCajero = (Invoke-Api POST "/auth/login" @{ correo = "ines.consultorios@veterinaria.com"; password = "Inicial123" }).Respuesta.token
+(Invoke-Api GET "/consultorios" -Token $tCajero).Codigo
+(Invoke-Api POST "/consultorios" @{ nombre = "Sala Cajero Manual"; idTipoConsultorio = $idTipo } $tCajero).Codigo
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 71. Tipos | Consulta `2`, Cirugía `1` y Estética `1` consultorios activos |
+| 72. Crear tipo | `201`; el repetido: `Ya existe un tipo de consultorio con el nombre 'rayos x MANUAL'` |
+| 73. Crear consultorio | `201` y `Rayos X Manual`; el repetido: `Ya existe un consultorio con el nombre 'sala rx manual'`; tipo inexistente: `404` |
+| 74. Filtro por tipo | Solo `Sala RX Manual`, de `Rayos X Manual`, activa |
+| 75. Desactivar | `No se puede desactivar el tipo 'Rayos X Manual': tiene 1 consultorio(s) activo(s). Desactiva primero sus consultorios`, `204`, `204` |
+| 76. Tipo desactivado | `El tipo de consultorio 'Rayos X Manual' está desactivado` y `No se puede reactivar el consultorio 'Sala RX Manual': su tipo 'Rayos X Manual' está desactivado. Reactiva primero el tipo` |
+| 77. Reactivar | `200`, `200` |
+| 78. Cajero | `200` al consultar, `403` al crear |
+
 #### Borrar las cuentas de prueba
 
 Las pruebas manuales **sí guardan datos**. Para borrar una cuenta de prueba (primero su perfil de cliente, después el usuario):
@@ -739,10 +797,16 @@ Para el cliente de la prueba de `/me`:
 psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM clientes WHERE id_usuario = (SELECT id_usuario FROM usuarios WHERE correo = 'ana.me@correo.com'); DELETE FROM usuarios WHERE correo = 'ana.me@correo.com';"
 ```
 
+Para los tipos y consultorios de prueba (la API no los borra, solo los desactiva; se borra primero el consultorio y después su tipo):
+
+```bash
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM consultorios WHERE nombre LIKE '%Manual'; DELETE FROM tipos_consultorio WHERE nombre LIKE '%Manual';"
+```
+
 Para el personal de prueba basta con borrar sus usuarios: su perfil, turnos y bloqueos se borran solos (`ON DELETE CASCADE`):
 
 ```bash
-psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com', 'sofia.bloqueos@veterinaria.com', 'caja.me@veterinaria.com', 'marta.clinica@veterinaria.com', 'nora.turnos@veterinaria.com');"
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com', 'sofia.bloqueos@veterinaria.com', 'caja.me@veterinaria.com', 'marta.clinica@veterinaria.com', 'nora.turnos@veterinaria.com', 'ines.consultorios@veterinaria.com');"
 ```
 
 ## Documentación de la API (Swagger UI)
@@ -1374,7 +1438,7 @@ Respuesta `201` (mismo formato en la lista, la edición y `mi-perfil/bloqueos`):
 
 Horario de atención de la clínica y espacios físicos (tipos de consultorio y consultorios). Las clases están en el paquete `agenda` porque el motor de citas del Sprint 3 las usará: solo ofrecerá citas en días laborables, dentro del horario y en un consultorio libre del tipo que pide el servicio.
 
-> **Estado:** entidades y repositorios, y horario de la clínica listos. Los endpoints de tipos de consultorio y consultorios llegan en las siguientes partes.
+> **Estado:** módulo completo: entidades y repositorios, horario de la clínica, tipos de consultorio y consultorios.
 
 ### Entidades
 
@@ -1463,3 +1527,78 @@ Ejemplo: el sábado pasa a cerrar a las 14:00 y Laura tiene turno de 10:00 a 18:
 - Guardar el mismo horario dos veces seguidas no da error.
 
 > **Pendiente (Sprint 3):** qué hacer con las citas ya agendadas en horas que dejen de ser laborables.
+
+### Tipos de consultorio
+
+Las clases de espacio físico (Consulta, Cirugía, Estética…). Cada servicio indica qué tipo necesita, y la agenda busca un consultorio libre de ese tipo.
+
+| Método y ruta | Quién | Qué hace | Respuesta |
+|---|---|---|---|
+| `GET /api/consultorios/tipos` | Cualquier usuario con sesión | Lista ordenada por nombre. Filtro opcional `?activo=true` o `false` | `200` |
+| `POST /api/consultorios/tipos` | ADMIN | Crea un tipo | `201` |
+| `PUT /api/consultorios/tipos/{id}` | ADMIN | Edita nombre y descripción | `200` |
+| `PATCH /api/consultorios/tipos/{id}/desactivar` | ADMIN | Desactiva el tipo | `204` |
+| `PATCH /api/consultorios/tipos/{id}/reactivar` | ADMIN | Lo reactiva | `200` |
+
+```json
+POST /api/consultorios/tipos
+{ "nombre": "Rayos X", "descripcion": "Diagnóstico por imagen" }
+```
+
+```json
+{
+  "idTipoConsultorio": 4,
+  "nombre": "Rayos X",
+  "descripcion": "Diagnóstico por imagen",
+  "activo": true,
+  "consultoriosActivos": 0
+}
+```
+
+`consultoriosActivos` es el número de consultorios activos del tipo, para que el frontend sepa si se puede desactivar.
+
+### Consultorios
+
+Los espacios físicos donde se atienden las citas (Consultorio 1, Quirófano…).
+
+| Método y ruta | Quién | Qué hace | Respuesta |
+|---|---|---|---|
+| `GET /api/consultorios` | Cualquier usuario con sesión | Lista ordenada por nombre. Filtros opcionales: `?idTipo=` y `?activo=true` o `false` | `200` |
+| `GET /api/consultorios/{id}` | Cualquier usuario con sesión | Detalle | `200` / `404` |
+| `POST /api/consultorios` | ADMIN | Crea un consultorio | `201` |
+| `PUT /api/consultorios/{id}` | ADMIN | Edita nombre y tipo | `200` |
+| `PATCH /api/consultorios/{id}/desactivar` | ADMIN | Deja de ofrecerse para citas nuevas | `204` |
+| `PATCH /api/consultorios/{id}/reactivar` | ADMIN | Lo vuelve a ofrecer | `200` |
+
+```json
+POST /api/consultorios
+{ "nombre": "Consultorio 3", "idTipoConsultorio": 1 }
+```
+
+```json
+{
+  "idConsultorio": 5,
+  "nombre": "Consultorio 3",
+  "activo": true,
+  "idTipoConsultorio": 1,
+  "nombreTipo": "Consulta"
+}
+```
+
+#### Reglas
+
+| Regla | Si no se cumple |
+|---|---|
+| El nombre es obligatorio: máximo 80 caracteres en un tipo y 60 en un consultorio | `400`, `errors.nombre` |
+| El nombre no se repite, sin importar mayúsculas ni espacios en los extremos (cada cosa por separado: tipos con tipos y consultorios con consultorios) | `409` `Ya existe un consultorio con el nombre 'Consultorio 3'` |
+| El tipo de un consultorio es obligatorio y debe existir | `400` (falta) / `404` `Tipo de consultorio no encontrado con id 99` |
+| Un consultorio nuevo, o que cambia de tipo, debe asignarse a un tipo **activo**. Al editar solo el nombre, conserva su tipo aunque esté desactivado | `400` `El tipo de consultorio 'Laboratorio' está desactivado` |
+| **No se puede desactivar un tipo con consultorios activos**: primero se desactivan sus consultorios | `409` `No se puede desactivar el tipo 'Rayos X': tiene 1 consultorio(s) activo(s). Desactiva primero sus consultorios` |
+| **No se puede reactivar un consultorio cuyo tipo está desactivado**: primero se reactiva el tipo | `409` `No se puede reactivar el consultorio 'Sala RX': su tipo 'Rayos X' está desactivado. Reactiva primero el tipo` |
+| Desactivar o reactivar dos veces seguidas no da error | |
+| **No hay `DELETE`:** las citas pasadas referencian los consultorios, así que solo se desactivan | |
+
+- Con estas reglas **nunca hay un consultorio activo de un tipo desactivado**.
+- **Relación con el módulo de servicios:** al crear o editar un servicio, solo se acepta un tipo de consultorio **activo**. Desactivar un tipo impide usarlo en servicios nuevos; los servicios que ya lo tenían se conservan.
+
+> **Pendiente (Sprint 3):** qué hacer con las citas futuras de un consultorio que se desactiva.
