@@ -201,7 +201,7 @@ export DB_PASSWORD="tu_contraseña"
 Si todo sale bien, al final aparece:
 
 ```
-[INFO] Tests run: 157, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 176, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -224,6 +224,7 @@ Si todo sale bien, al final aparece:
 | `auth.controller.AuthRegistroTest` | 13 | Registro: crea usuario y cliente vinculados, contraseña cifrada, token, login posterior, correo repetido y contraseñas débiles |
 | `auth.service.AuthRegistroTransaccionTest` | 1 | Si falla la creación del cliente, tampoco se guarda el usuario |
 | `personal.controller.PersonalControllerTest` | 19 | Personal: alta de veterinario y cajero, login del empleado nuevo, correo normalizado y repetido, cédula obligatoria, roles no permitidos, filtros, edición, desactivar/reactivar y permisos por rol |
+| `agenda.controller.HorarioClinicaControllerTest` | 19 | Horario de la clínica: consulta por cualquier rol con sesión, 401 sin sesión, guardado sin segundos, reenvío tal cual del `GET`, semana incompleta o con día repetido, día fuera de rango, campos faltantes, cierre antes de la apertura, hora inválida, turnos que quedarían fuera (409, no se guarda nada, lista de varios, más de diez) y permisos por rol |
 | `agenda.repository.ConfigClinicaRepositoryTest` | 12 | Horario de la clínica, tipos de consultorio y consultorios contra la base: datos iniciales, búsquedas sin importar mayúsculas, filtros por tipo y activos, conteo de consultorios activos y reglas de la base (día repetido, cierre antes de la apertura, nombre de tipo repetido, consultorio sin tipo) |
 | `personal.controller.BloqueoDisponibilidadControllerTest` | 18 | Bloqueos: alta con fechas sin segundos, ausencia que ya empezó, lista sin terminados salvo `incluirPasados`, motivo inválido, fin antes del inicio, bloqueo ya terminado, bloqueos encimados (409), seguidos permitidos, edición, borrado, historial intocable, bloqueo de otra persona (404) y permisos por rol |
 | `personal.controller.HorarioPersonalControllerTest` | 17 | Turnos: alta con nombre del día y formato `HH:mm`, orden, segundos descartados, día fuera de rango, fin antes del inicio, turnos encimados (409), turnos seguidos permitidos, edición sin chocar consigo mismo, borrado, turno de otra persona (404) y permisos por rol |
@@ -608,6 +609,69 @@ $tCajero = (Invoke-Api POST "/auth/login" @{ correo = "caja.me@veterinaria.com";
 | 53. Sus mascotas con ese id | `200` |
 | 54. Cajero | Un número (su `idPersonal`) |
 
+#### Horario de la clínica
+
+Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1. **Al terminar, el horario original se restablece** (caso 64).
+
+```powershell
+# 55. Consultar el horario → 7 días, de domingo a sábado. Se guarda una copia para restablecerlo al final
+$original = (Invoke-Api GET "/config/horarios-clinica" -Token $token).Respuesta
+$original | Select-Object nombreDia, horaApertura, horaCierre, laborable
+
+# 56. Cerrar el sábado a las 14:00 (todavía no hay turnos) → 200
+$nueva = $original | ForEach-Object { $d = $_.PSObject.Copy(); if ($d.diaSemana -eq 6) { $d.horaCierre = "14:00" }; $d }
+$r = Invoke-Api PUT "/config/horarios-clinica" $nueva $token
+$r.Codigo
+$r.Respuesta[6].horaCierre
+
+# 57. Alta de una veterinaria con un turno el sábado (10:00-13:00) y otro el domingo (09:00-12:00) → 201, 201, 201
+$alta = Invoke-Api POST "/personal" @{ correo = "marta.clinica@veterinaria.com"; password = "Inicial123"; rol = "VETERINARIO"; nombre = "Marta"; apellidos = "Clínica"; telefono = "5554443333"; cedulaProfesional = "55667788" } $token
+$alta.Codigo
+$idVet = $alta.Respuesta.idPersonal
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 6; horaInicio = "10:00"; horaFin = "13:00" } $token).Codigo
+(Invoke-Api POST "/personal/$idVet/horarios" @{ diaSemana = 0; horaInicio = "09:00"; horaFin = "12:00" } $token).Codigo
+
+# 58. Cerrar el sábado a las 12:00 dejaría fuera el turno de Marta → 409 con el turno afectado
+$recorte = $nueva | ForEach-Object { $d = $_.PSObject.Copy(); if ($d.diaSemana -eq 6) { $d.horaCierre = "12:00" }; $d }
+(Invoke-Api PUT "/config/horarios-clinica" $recorte $token).Respuesta.message
+
+# 59. Dejar el domingo como no laborable también dejaría fuera su turno → 409
+$domingoCerrado = $nueva | ForEach-Object { $d = $_.PSObject.Copy(); if ($d.diaSemana -eq 0) { $d.laborable = $false }; $d }
+(Invoke-Api PUT "/config/horarios-clinica" $domingoCerrado $token).Respuesta.message
+
+# 60. No se guardó nada de los dos intentos → domingo sigue laborable y el sábado cierra a las 14:00
+(Invoke-Api GET "/config/horarios-clinica" -Token $token).Respuesta | Where-Object diaSemana -in 0, 6 | Select-Object nombreDia, horaCierre, laborable
+
+# 61. Cierre antes de la apertura → 400 con el día afectado
+$malo = $nueva | ForEach-Object { $d = $_.PSObject.Copy(); if ($d.diaSemana -eq 1) { $d.horaApertura = "20:00"; $d.horaCierre = "08:00" }; $d }
+(Invoke-Api PUT "/config/horarios-clinica" $malo $token).Respuesta.message
+
+# 62. Menos de 7 días → 400
+(Invoke-Api PUT "/config/horarios-clinica" ($original | Select-Object -First 6) $token).Respuesta.message
+
+# 63. La veterinaria consulta el horario → 200, pero no puede modificarlo → 403
+$tVet = (Invoke-Api POST "/auth/login" @{ correo = "marta.clinica@veterinaria.com"; password = "Inicial123" }).Respuesta.token
+(Invoke-Api GET "/config/horarios-clinica" -Token $tVet).Codigo
+(Invoke-Api PUT "/config/horarios-clinica" $original $tVet).Codigo
+
+# 64. Restablecer el horario original → 200 (sus turnos caben en el horario original)
+(Invoke-Api PUT "/config/horarios-clinica" $original $token).Codigo
+(Invoke-Api GET "/config/horarios-clinica" -Token $token).Respuesta | Select-Object nombreDia, horaApertura, horaCierre, laborable
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 55. Consultar | Los 7 días, de `Domingo` a `Sábado` |
+| 56. Cerrar el sábado a las 14:00 | `200` y `14:00` |
+| 57. Alta y turnos | `201`, `201`, `201` |
+| 58. Sábado cierra a las 12:00 | `No se guardó el horario: 1 turno quedaría fuera del horario de la clínica: Marta Clínica, Sábado 10:00-13:00. Ajusta o borra esos turnos y vuelve a intentarlo.` |
+| 59. Domingo no laborable | El mismo mensaje, con `Marta Clínica, Domingo 09:00-12:00` |
+| 60. Nada se guardó | Domingo `14:00` y `True`; sábado `14:00` y `True` |
+| 61. Cierre antes de la apertura | `El día Lunes: la hora de cierre debe ser posterior a la hora de apertura` |
+| 62. Menos de 7 días | `Debes enviar el horario de los 7 días de la semana (0 = domingo … 6 = sábado), cada uno una sola vez` |
+| 63. La veterinaria | `200` al consultar, `403` al modificar |
+| 64. Restablecer | `200` y el horario como estaba al inicio |
+
 #### Borrar las cuentas de prueba
 
 Las pruebas manuales **sí guardan datos**. Para borrar una cuenta de prueba (primero su perfil de cliente, después el usuario):
@@ -631,7 +695,7 @@ psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM clientes
 Para el personal de prueba basta con borrar sus usuarios: su perfil, turnos y bloqueos se borran solos (`ON DELETE CASCADE`):
 
 ```bash
-psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com', 'sofia.bloqueos@veterinaria.com', 'caja.me@veterinaria.com');"
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com', 'sofia.bloqueos@veterinaria.com', 'caja.me@veterinaria.com', 'marta.clinica@veterinaria.com');"
 ```
 
 ## Documentación de la API (Swagger UI)
@@ -1261,7 +1325,7 @@ Respuesta `201` (mismo formato en la lista, la edición y `mi-perfil/bloqueos`):
 
 Horario de atención de la clínica y espacios físicos (tipos de consultorio y consultorios). Las clases están en el paquete `agenda` porque el motor de citas del Sprint 3 las usará: solo ofrecerá citas en días laborables, dentro del horario y en un consultorio libre del tipo que pide el servicio.
 
-> **Estado:** Parte 1 lista (entidades y repositorios). Los endpoints (`/api/config/horarios-clinica` y `/api/consultorios`) llegan en las siguientes partes.
+> **Estado:** entidades y repositorios, y horario de la clínica listos. Los endpoints de tipos de consultorio y consultorios llegan en las siguientes partes.
 
 ### Entidades
 
@@ -1284,3 +1348,70 @@ Horario de atención de la clínica y espacios físicos (tipos de consultorio y 
 | `HorarioClinicaRepository` | Horario de un día (`findByDiaSemana`) y la semana completa de domingo a sábado |
 | `TipoConsultorioRepository` | Todos o solo los activos (por nombre) y búsqueda por nombre sin importar mayúsculas |
 | `ConsultorioRepository` | Todos o solo los activos, los de un tipo (todos o activos), búsqueda por nombre sin importar mayúsculas y cuántos consultorios activos tiene un tipo |
+
+### Horario de la clínica
+
+| Método y ruta | Quién | Qué hace | Respuesta |
+|---|---|---|---|
+| `GET /api/config/horarios-clinica` | Cualquier usuario con sesión | La semana completa, de domingo a sábado. El cliente también lo necesita para saber cuándo abre la clínica | `200` |
+| `PUT /api/config/horarios-clinica` | ADMIN | Reemplaza el horario de **los 7 días** en una sola petición | `200` |
+
+#### Modificar el horario
+
+```http
+PUT /api/config/horarios-clinica
+Authorization: Bearer <token del ADMIN>
+Content-Type: application/json
+```
+
+```json
+[
+  { "diaSemana": 0, "horaApertura": "09:00", "horaCierre": "14:00", "laborable": true },
+  { "diaSemana": 1, "horaApertura": "08:00", "horaCierre": "20:00", "laborable": true },
+  { "diaSemana": 2, "horaApertura": "08:00", "horaCierre": "20:00", "laborable": true },
+  { "diaSemana": 3, "horaApertura": "08:00", "horaCierre": "20:00", "laborable": true },
+  { "diaSemana": 4, "horaApertura": "08:00", "horaCierre": "20:00", "laborable": true },
+  { "diaSemana": 5, "horaApertura": "08:00", "horaCierre": "20:00", "laborable": true },
+  { "diaSemana": 6, "horaApertura": "08:00", "horaCierre": "18:00", "laborable": true }
+]
+```
+
+La respuesta `200` (y el `GET`) devuelve la misma lista, y cada día trae además `nombreDia` ("Domingo", "Lunes"…) para que el frontend no tenga que convertir el número:
+
+```json
+{ "diaSemana": 6, "nombreDia": "Sábado", "horaApertura": "08:00", "horaCierre": "18:00", "laborable": true }
+```
+
+- `diaSemana`: `0` = domingo … `6` = sábado, igual que los turnos del personal.
+- Las horas viajan como `"HH:mm"`. Si llegan segundos, se descartan.
+- **Para el frontend:** se puede reenviar tal cual lo que devolvió el `GET` (el campo `nombreDia` se ignora). Para cerrar un día basta con poner `"laborable": false`, pero **hay que seguir enviando sus horas** (por ejemplo, las que ya tenía), porque la base exige un cierre posterior a la apertura aunque el día esté cerrado.
+
+#### Reglas
+
+| Regla | Si no se cumple |
+|---|---|
+| Deben venir **los 7 días**, cada uno una sola vez | `400` `Debes enviar el horario de los 7 días de la semana (0 = domingo … 6 = sábado), cada uno una sola vez` |
+| `diaSemana` va de 0 a 6; `horaApertura`, `horaCierre` y `laborable` son obligatorios | `400` `Elemento 4 de la lista: El día de la semana debe estar entre 0 (domingo) y 6 (sábado)` (indica qué elemento falla) |
+| `horaCierre` es posterior a `horaApertura`, **también en un día no laborable** | `400` `El día Lunes: la hora de cierre debe ser posterior a la hora de apertura` |
+| La lista no es un arreglo JSON, o una hora no existe (`"25:00"`) | `400` |
+| **Ningún turno del personal puede quedar fuera del nuevo horario** | `409`, **sin guardar nada** |
+
+**Cuándo un turno queda fuera:** el día pasa a no laborable y alguien tiene turno ese día, o el turno empieza antes de la nueva apertura, o termina después del nuevo cierre. Un turno que coincide exactamente con la apertura y el cierre sí cabe. Se revisan los turnos de **todo** el personal, también de cuentas desactivadas, para que al reactivar a alguien su turno no quede fuera.
+
+Ejemplo: el sábado pasa a cerrar a las 14:00 y Laura tiene turno de 10:00 a 18:00. Respuesta `409`:
+
+```json
+{
+  "status": 409,
+  "error": "Conflict",
+  "message": "No se guardó el horario: 1 turno quedaría fuera del horario de la clínica: Laura Zamora, Sábado 10:00-18:00. Ajusta o borra esos turnos y vuelve a intentarlo."
+}
+```
+
+- La operación es **todo o nada**: si hay conflicto, no cambia ni un día (aunque otros días del mismo `PUT` fueran válidos).
+- El mensaje lista los primeros 10 turnos afectados y, si hay más, dice cuántos faltan (`; y 2 más`).
+- Para resolverlo, el ADMIN ajusta o borra primero esos turnos (`PUT` o `DELETE /api/personal/{id}/horarios/{idHorario}`) y vuelve a guardar el horario.
+- Guardar el mismo horario dos veces seguidas no da error.
+
+> **Pendiente (siguiente parte):** validar también el sentido contrario: que al agregar o editar un turno del personal quede dentro del horario de la clínica.
+> **Pendiente (Sprint 3):** qué hacer con las citas ya agendadas en horas que dejen de ser laborables.
