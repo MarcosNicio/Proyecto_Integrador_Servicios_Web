@@ -2,6 +2,7 @@ package com.veterinaria.auth.controller;
 
 import com.veterinaria.auth.dto.AuthResponse;
 import com.veterinaria.auth.dto.LoginRequest;
+import com.veterinaria.auth.dto.MeResponse;
 import com.veterinaria.auth.dto.RegistroRequest;
 import com.veterinaria.auth.dto.RegistroResponse;
 import com.veterinaria.auth.service.AuthService;
@@ -14,13 +15,15 @@ import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Endpoints públicos de autenticación. {@code /api/auth/**} no requiere token
+ * Endpoints de autenticación. {@code /api/auth/**} no requiere token, salvo {@code /me}
  * (ver {@code common/security/SecurityConfig}).
  */
 @RestController
@@ -59,5 +62,18 @@ public class AuthController {
     })
     public ResponseEntity<AuthResponse> login(@Valid @RequestBody LoginRequest request) {
         return ResponseEntity.ok(authService.login(request));
+    }
+
+    @GetMapping("/me")
+    @Operation(summary = "Consultar el usuario que inició sesión",
+            description = "Devuelve la cuenta del token y su perfil según el rol: 'cliente' para CLIENTE, "
+                    + "'personal' para VETERINARIO y CAJERO, ninguno para ADMIN. Úsalo justo después del "
+                    + "login para obtener el idCliente o el idPersonal. Requiere token.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Datos del usuario y su perfil"),
+            @ApiResponse(responseCode = "401", description = "Sin token, token inválido o vencido, o cuenta desactivada")
+    })
+    public ResponseEntity<MeResponse> me(Authentication authentication) {
+        return ResponseEntity.ok(authService.obtenerUsuarioActual(authentication.getName()));
     }
 }
