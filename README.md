@@ -201,7 +201,7 @@ export DB_PASSWORD="tu_contraseña"
 Si todo sale bien, al final aparece:
 
 ```
-[INFO] Tests run: 81, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 101, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -222,6 +222,8 @@ Si todo sale bien, al final aparece:
 | `auth.controller.AuthControllerTest` | 10 | Login: credenciales correctas e incorrectas, cuenta desactivada, validaciones y uso del token |
 | `auth.controller.AuthRegistroTest` | 13 | Registro: crea usuario y cliente vinculados, contraseña cifrada, token, login posterior, correo repetido y contraseñas débiles |
 | `auth.service.AuthRegistroTransaccionTest` | 1 | Si falla la creación del cliente, tampoco se guarda el usuario |
+| `personal.controller.PersonalControllerTest` | 19 | Personal: alta de veterinario y cajero, login del empleado nuevo, correo normalizado y repetido, cédula obligatoria, roles no permitidos, filtros, edición, desactivar/reactivar y permisos por rol |
+| `personal.service.PersonalAltaTransaccionTest` | 1 | Si falla el perfil de personal, tampoco se guarda la cuenta |
 | `personal.repository.PersonalRepositoryTest` | 12 | Entidades de personal, turnos y bloqueos contra la base: vínculo con el usuario, filtros por rol, orden, bloqueos encimados y reglas de la base |
 
 #### Si algo falla
@@ -382,6 +384,68 @@ Ahora prueba cada caso. Todos muestran solo el código HTTP:
 | 14. Admin crea un antecedente | `201` |
 | 15. Mensaje | `No tienes permiso para acceder o modificar la información de otro cliente` |
 
+#### Personal (alta y gestión)
+
+Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1.
+
+```powershell
+# 16. Alta de una veterinaria → 201
+$vet = @{ correo = "laura.prueba@veterinaria.com"; password = "Inicial123"; rol = "VETERINARIO"; nombre = "Laura"; apellidos = "Zamora"; telefono = "5551112222"; cedulaProfesional = "12345678"; especialidadEspecies = "Perros, Gatos" }
+$alta = Invoke-Api POST "/personal" $vet $token
+$alta.Codigo
+$idVet = $alta.Respuesta.idPersonal
+
+# 17. El mismo correo otra vez → 409
+(Invoke-Api POST "/personal" $vet $token).Codigo
+
+# 18. Veterinario sin cédula → 400 con el mensaje
+$sinCedula = $vet.Clone(); $sinCedula.correo = "otro.vet@veterinaria.com"; $sinCedula.Remove("cedulaProfesional")
+(Invoke-Api POST "/personal" $sinCedula $token).Respuesta.message
+
+# 19. Rol no permitido → 400 con el error del campo
+$rolMalo = $vet.Clone(); $rolMalo.correo = "otro.vet@veterinaria.com"; $rolMalo.rol = "ADMIN"
+(Invoke-Api POST "/personal" $rolMalo $token).Respuesta.errors
+
+# 20. Alta de un cajero (sin cédula) → 201
+(Invoke-Api POST "/personal" @{ correo = "pedro.prueba@veterinaria.com"; password = "Inicial123"; rol = "CAJERO"; nombre = "Pedro"; apellidos = "Alvarez"; telefono = "5553334444" } $token).Codigo
+
+# 21. Lista filtrada: solo veterinarios → solo aparece Laura
+(Invoke-Api GET "/personal?rol=VETERINARIO" -Token $token).Respuesta | Select-Object idPersonal, correo, rol, activo
+
+# 22. Editar el perfil → 200 con el teléfono nuevo
+(Invoke-Api PUT "/personal/$idVet" @{ nombre = "Laura"; apellidos = "Zamora"; telefono = "5559998888"; cedulaProfesional = "12345678" } $token).Respuesta.telefono
+
+# 23. La veterinaria inicia sesión y consulta su perfil → 200
+$tVet = (Invoke-Api POST "/auth/login" @{ correo = "laura.prueba@veterinaria.com"; password = "Inicial123" }).Respuesta.token
+(Invoke-Api GET "/personal/mi-perfil" -Token $tVet).Respuesta.correo
+
+# 24. La veterinaria intenta ver la lista del personal → 403
+(Invoke-Api GET "/personal" -Token $tVet).Codigo
+
+# 25. Desactivar → 204; su token deja de servir (401) y ya no puede iniciar sesión (403)
+(Invoke-Api PATCH "/personal/$idVet/desactivar" -Token $token).Codigo
+(Invoke-Api GET "/personal/mi-perfil" -Token $tVet).Codigo
+(Invoke-Api POST "/auth/login" @{ correo = "laura.prueba@veterinaria.com"; password = "Inicial123" }).Codigo
+
+# 26. Reactivar → 200 y vuelve a iniciar sesión
+(Invoke-Api PATCH "/personal/$idVet/reactivar" -Token $token).Respuesta.activo
+(Invoke-Api POST "/auth/login" @{ correo = "laura.prueba@veterinaria.com"; password = "Inicial123" }).Codigo
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 16. Alta de veterinaria | `201` |
+| 17. Correo repetido | `409` |
+| 18. Veterinario sin cédula | `La cédula profesional es obligatoria para veterinarios` |
+| 19. Rol `ADMIN` | Columna `rol`: `El rol debe ser VETERINARIO o CAJERO` |
+| 20. Alta de cajero sin cédula | `201` |
+| 21. Filtro por rol | Solo `laura.prueba@veterinaria.com`, con rol `VETERINARIO` |
+| 22. Edición | `5559998888` |
+| 23. Su propio perfil | `laura.prueba@veterinaria.com` |
+| 24. Veterinaria en la lista del personal | `403` |
+| 25. Desactivar | `204`, `401`, `403` |
+| 26. Reactivar | `True`, `200` |
+
 #### Borrar las cuentas de prueba
 
 Las pruebas manuales **sí guardan datos**. Para borrar una cuenta de prueba (primero su perfil de cliente, después el usuario):
@@ -394,6 +458,12 @@ Para las pruebas de roles (Ana, Beto y el cajero) hay que borrar también sus ma
 
 ```bash
 psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM antecedentes_clinicos WHERE id_mascota IN (SELECT m.id_mascota FROM mascotas m JOIN clientes c ON c.id_cliente = m.id_cliente JOIN usuarios u ON u.id_usuario = c.id_usuario WHERE u.correo LIKE '%.roles@correo.com'); DELETE FROM mascotas WHERE id_cliente IN (SELECT c.id_cliente FROM clientes c JOIN usuarios u ON u.id_usuario = c.id_usuario WHERE u.correo LIKE '%.roles@correo.com'); DELETE FROM clientes WHERE id_usuario IN (SELECT id_usuario FROM usuarios WHERE correo LIKE '%.roles@correo.com'); DELETE FROM usuarios WHERE correo LIKE '%.roles@correo.com';"
+```
+
+Para el personal de prueba basta con borrar sus usuarios: su perfil, turnos y bloqueos se borran solos (`ON DELETE CASCADE`):
+
+```bash
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com');"
 ```
 
 ## Documentación de la API (Swagger UI)
@@ -763,7 +833,7 @@ void adminPuedeEliminar() { ... }
 
 Gestiona a los empleados de la clínica (veterinarios y cajeros), sus turnos semanales y los bloqueos de su agenda. La agenda del Sprint 3 usará estos datos para calcular los horarios libres de cada veterinario.
 
-> **Estado:** Parte 1 lista (entidades y repositorios). Los endpoints (`/api/personal`, horarios y bloqueos) llegan en las siguientes partes.
+> **Estado:** Parte 1 (entidades y repositorios) y Parte 2 (alta y gestión del personal) listas. Los endpoints de horarios y bloqueos llegan en las siguientes partes.
 
 ### Entidades
 
@@ -787,3 +857,70 @@ Gestiona a los empleados de la clínica (veterinarios y cajeros), sus turnos sem
 | `BloqueoDisponibilidadRepository` | Bloqueos de una persona (todos o solo los que aún no terminan), un bloqueo solo si pertenece a esa persona, y `buscarEncimados` |
 
 `buscarEncimados(idPersonal, inicio, fin)` devuelve los bloqueos de esa persona que chocan con el rango indicado. Dos rangos chocan si cada uno empieza antes de que termine el otro. Si uno termina justo cuando empieza el otro (10:00-12:00 y 12:00-14:00), **no** chocan. Lo usarán la validación de bloqueos y la agenda.
+
+### Endpoints del personal
+
+| Método y ruta | Quién | Qué hace | Respuesta |
+|---|---|---|---|
+| `POST /api/personal` | ADMIN | Da de alta a un veterinario o cajero: crea su cuenta y su perfil en una sola operación | `201` |
+| `GET /api/personal` | ADMIN | Lista al personal ordenado por apellidos. Filtros opcionales: `?rol=VETERINARIO` o `CAJERO`, `?activo=true` o `false` | `200` |
+| `GET /api/personal/{id}` | ADMIN | Detalle de un empleado | `200` / `404` |
+| `PUT /api/personal/{id}` | ADMIN | Edita nombre, apellidos, teléfono, cédula y especies | `200` |
+| `PATCH /api/personal/{id}/desactivar` | ADMIN | Desactiva su cuenta: no puede iniciar sesión y su token deja de servir. Sus datos se conservan | `204` |
+| `PATCH /api/personal/{id}/reactivar` | ADMIN | Vuelve a activar su cuenta | `200` |
+| `GET /api/personal/mi-perfil` | VETERINARIO, CAJERO | El empleado consulta **su propio** perfil, según su token | `200` / `404` |
+
+#### Alta de un empleado
+
+```http
+POST /api/personal
+Authorization: Bearer <token del ADMIN>
+Content-Type: application/json
+```
+
+```json
+{
+  "correo": "laura.zamora@veterinaria.com",
+  "password": "Inicial123",
+  "rol": "VETERINARIO",
+  "nombre": "Laura",
+  "apellidos": "Zamora Ruiz",
+  "telefono": "5551112222",
+  "cedulaProfesional": "12345678",
+  "especialidadEspecies": "Perros, Gatos"
+}
+```
+
+Respuesta `201`. El mismo formato sale en la lista, el detalle, la edición, la reactivación y `mi-perfil`:
+
+```json
+{
+  "idPersonal": 1,
+  "idUsuario": 2,
+  "correo": "laura.zamora@veterinaria.com",
+  "rol": "VETERINARIO",
+  "activo": true,
+  "nombre": "Laura",
+  "apellidos": "Zamora Ruiz",
+  "telefono": "5551112222",
+  "cedulaProfesional": "12345678",
+  "especialidadEspecies": "Perros, Gatos"
+}
+```
+
+La respuesta **nunca** incluye la contraseña. Con esa contraseña inicial, el empleado ya puede iniciar sesión en `POST /api/auth/login`.
+
+#### Reglas
+
+| Regla | Si no se cumple |
+|---|---|
+| `rol` solo puede ser `VETERINARIO` o `CAJERO`: los clientes se registran solos y el ADMIN ya existe | `400`, `errors.rol` |
+| La contraseña tiene de 8 a 72 caracteres, con al menos una letra y un número (igual que el registro). Se guarda cifrada con BCrypt | `400`, `errors.password` |
+| El correo se guarda sin espacios y en minúsculas, y no puede estar registrado | `409` `El correo ya está registrado` |
+| Un **veterinario** debe tener cédula profesional, al darlo de alta y al editarlo: identifica legalmente al médico y saldrá en las recetas. Para un cajero es opcional | `400` `La cédula profesional es obligatoria para veterinarios` |
+| Nombre, apellidos y teléfono son obligatorios. La cédula y las especies son opcionales; si llegan vacías se guardan como `null` | `400` con el error de cada campo |
+| El alta es **todo o nada**: si falla el perfil, tampoco se guarda la cuenta | |
+| La edición no cambia el correo, el rol ni la contraseña | |
+| Desactivar o reactivar dos veces seguidas no da error | |
+
+Para el frontend: el `idPersonal` es el que usarán los turnos, los bloqueos y, en el Sprint 3, las citas (`id_veterinario`).
