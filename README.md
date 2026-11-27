@@ -201,7 +201,7 @@ export DB_PASSWORD="tu_contraseña"
 Si todo sale bien, al final aparece:
 
 ```
-[INFO] Tests run: 252, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 256, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -228,7 +228,7 @@ Si todo sale bien, al final aparece:
 | `servicios.controller.ServicioControllerTest` | 13 | Catálogo de servicios: alta, tipo de consultorio activo / inexistente / desactivado, nombre repetido en la categoría, categoría inexistente o desactivada, validaciones, filtros de la lista, edición, desactivar y reactivar (400 si su categoría está inactiva) y permisos por rol |
 | `servicios.controller.TarifaServicioControllerTest` | 17 | Tarifas y cotización: alta con especie normalizada, rangos contiguos, traslapes (409), validaciones, lista y filtro por especie, edición, borrado, cotización en los bordes de los rangos, precio base cuando ningún rango aplica y permisos por rol |
 | `agenda.controller.ConsultorioControllerTest` | 15 | Consultorios: lista inicial y filtros por tipo y estado, detalle con nombre del tipo y 404, alta con nombre normalizado, nombre repetido (409), tipo inexistente (404) o desactivado (400), validaciones, edición (cambio de tipo, conservar el propio nombre, tipo desactivado), desactivar y reactivar, reactivar con el tipo desactivado (409) y permisos por rol |
-| `agenda.controller.TipoConsultorioControllerTest` | 12 | Tipos de consultorio: lista con conteo de consultorios activos y filtro por estado, alta, nombre repetido (409), validaciones, edición, desactivar un tipo (409 si tiene consultorios activos), reactivar, el tipo desactivado deja de pasar la consulta del módulo de servicios y permisos por rol |
+| `agenda.controller.TipoConsultorioControllerTest` | 16 | Tipos de consultorio: lista con conteo de consultorios activos y filtro por estado, alta, nombre repetido (409), validaciones, edición, desactivar un tipo (409 si tiene consultorios o servicios activos, y los inactivos no cuentan), reactivar, el tipo desactivado deja de pasar la consulta del módulo de servicios y permisos por rol |
 | `agenda.controller.HorarioClinicaControllerTest` | 19 | Horario de la clínica: consulta por cualquier rol con sesión, 401 sin sesión, guardado sin segundos, reenvío tal cual del `GET`, semana incompleta o con día repetido, día fuera de rango, campos faltantes, cierre antes de la apertura, hora inválida, turnos que quedarían fuera (409, no se guarda nada, lista de varios, más de diez) y permisos por rol |
 | `agenda.repository.ConfigClinicaRepositoryTest` | 12 | Horario de la clínica, tipos de consultorio y consultorios contra la base: datos iniciales, búsquedas sin importar mayúsculas, filtros por tipo y activos, conteo de consultorios activos y reglas de la base (día repetido, cierre antes de la apertura, nombre de tipo repetido, consultorio sin tipo) |
 | `personal.controller.BloqueoDisponibilidadControllerTest` | 18 | Bloqueos: alta con fechas sin segundos, ausencia que ya empezó, lista sin terminados salvo `incluirPasados`, motivo inválido, fin antes del inicio, bloqueo ya terminado, bloqueos encimados (409), seguidos permitidos, edición, borrado, historial intocable, bloqueo de otra persona (404) y permisos por rol |
@@ -856,6 +856,42 @@ $tCajero = (Invoke-Api POST "/auth/login" @{ correo = "rosa.servicios@veterinari
 | 87. Reactivar | `No se puede reactivar el servicio porque su categoría 'Radiografías Manual' se encuentra inactiva`, `200`, `200` |
 | 88. Cajero | `200`, `200`, `403` |
 
+#### Tipo de consultorio en uso por un servicio
+
+Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1. Un tipo que usan servicios activos no se puede desactivar.
+
+```powershell
+# 89. Crear un tipo sin consultorios y un servicio activo que lo usa → 201 y 201
+$idTipo = (Invoke-Api POST "/consultorios/tipos" @{ nombre = "Tipo En Uso Manual" } $token).Respuesta.idTipoConsultorio
+$srv = Invoke-Api POST "/servicios" @{ idCategoria = 1; nombre = "Servicio En Uso Manual"; duracionMinutos = 20; precioBase = 100; idTipoConsultorio = $idTipo } $token
+$srv.Codigo
+$idSrv = $srv.Respuesta.idServicio
+
+# 90. Desactivar el tipo mientras el servicio está activo → 409 con el número de servicios
+(Invoke-Api PATCH "/consultorios/tipos/$idTipo/desactivar" -Token $token).Respuesta.message
+
+# 91. Desactivar el servicio → 204; ahora sí se puede desactivar el tipo → 204
+(Invoke-Api DELETE "/servicios/$idSrv" -Token $token).Codigo
+(Invoke-Api PATCH "/consultorios/tipos/$idTipo/desactivar" -Token $token).Codigo
+
+# 92. Reactivar el tipo → 200, y reactivar el servicio → 200 (su tipo vuelve a estar activo)
+(Invoke-Api PATCH "/consultorios/tipos/$idTipo/reactivar" -Token $token).Codigo
+(Invoke-Api PATCH "/servicios/$idSrv/reactivar" -Token $token).Codigo
+
+# 93. Con el servicio activo otra vez, cambiarle el tipo libera el tipo anterior → 200 y luego 204
+$idConsulta = ((Invoke-Api GET "/consultorios/tipos" -Token $token).Respuesta | Where-Object nombre -eq "Consulta").idTipoConsultorio
+(Invoke-Api PUT "/servicios/$idSrv" @{ idCategoria = 1; nombre = "Servicio En Uso Manual"; duracionMinutos = 20; precioBase = 100; idTipoConsultorio = $idConsulta } $token).Codigo
+(Invoke-Api PATCH "/consultorios/tipos/$idTipo/desactivar" -Token $token).Codigo
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 89. Tipo y servicio | `201` |
+| 90. Desactivar el tipo en uso | `No se puede desactivar el tipo 'Tipo En Uso Manual': lo usan 1 servicio(s) activo(s). Desactiva o cambia primero esos servicios` |
+| 91. Desactivar servicio y luego el tipo | `204`, `204` |
+| 92. Reactivar | `200`, `200` |
+| 93. Cambiarle el tipo al servicio | `200` y `204` |
+
 #### Borrar las cuentas de prueba
 
 Las pruebas manuales **sí guardan datos**. Para borrar una cuenta de prueba (primero su perfil de cliente, después el usuario):
@@ -876,10 +912,10 @@ Para el cliente de la prueba de `/me`:
 psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM clientes WHERE id_usuario = (SELECT id_usuario FROM usuarios WHERE correo = 'ana.me@correo.com'); DELETE FROM usuarios WHERE correo = 'ana.me@correo.com';"
 ```
 
-Para los tipos y consultorios de prueba (la API no los borra, solo los desactiva; se borra primero el consultorio y después su tipo):
+Para los tipos y consultorios de prueba (la API no los borra, solo los desactiva; se borran primero los servicios que los usan, después los consultorios y al final el tipo):
 
 ```bash
-psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM consultorios WHERE nombre LIKE '%Manual'; DELETE FROM tipos_consultorio WHERE nombre LIKE '%Manual';"
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM servicios WHERE nombre LIKE '%Manual'; DELETE FROM consultorios WHERE nombre LIKE '%Manual'; DELETE FROM tipos_consultorio WHERE nombre LIKE '%Manual';"
 ```
 
 Para los servicios y categorías de prueba (la API no los borra, solo los desactiva; sus tarifas se borran solas). Se borran primero los servicios, después las categorías y, al final, el tipo de consultorio de prueba:
@@ -1536,7 +1572,7 @@ Horario de atención de la clínica y espacios físicos (tipos de consultorio y 
 - **Días de la semana:** `0` = domingo … `6` = sábado, igual que los turnos del personal.
 - **Datos iniciales** (los carga `veterinaria_db.sql`): lunes a viernes de 08:00 a 20:00, sábado de 08:00 a 18:00 y domingo de 09:00 a 14:00; los tipos Consulta, Cirugía y Estética; y los consultorios Consultorio 1, Consultorio 2, Quirófano y Sala de Estética.
 - **Reglas que ya cuida la base:** cada día aparece una sola vez, el cierre es posterior a la apertura (también en días no laborables), el nombre de un tipo no se repite y todo consultorio tiene tipo.
-- **Relación con el módulo de servicios:** cada servicio guarda el `idTipoConsultorio` que necesita y solo acepta tipos **activos**. Desactivar un tipo impide usarlo en servicios nuevos.
+- **Relación con el módulo de servicios:** cada servicio guarda el `idTipoConsultorio` que necesita y solo acepta tipos **activos**. Un tipo que usan servicios activos no se puede desactivar.
 - **Desactivar en lugar de borrar:** los consultorios y tipos no se borran, porque las citas pasadas los siguen referenciando. Se desactivan para que no se usen en citas nuevas.
 
 ### Repositorios
@@ -1622,7 +1658,7 @@ Las clases de espacio físico (Consulta, Cirugía, Estética…). Cada servicio 
 | `GET /api/consultorios/tipos` | Cualquier usuario con sesión | Lista ordenada por nombre. Filtro opcional `?activo=true` o `false` | `200` |
 | `POST /api/consultorios/tipos` | ADMIN | Crea un tipo | `201` |
 | `PUT /api/consultorios/tipos/{id}` | ADMIN | Edita nombre y descripción | `200` |
-| `PATCH /api/consultorios/tipos/{id}/desactivar` | ADMIN | Desactiva el tipo | `204` |
+| `PATCH /api/consultorios/tipos/{id}/desactivar` | ADMIN | Desactiva el tipo (no se puede si tiene consultorios activos o lo usan servicios activos) | `204` |
 | `PATCH /api/consultorios/tipos/{id}/reactivar` | ADMIN | Lo reactiva | `200` |
 
 ```json
@@ -1679,12 +1715,14 @@ POST /api/consultorios
 | El tipo de un consultorio es obligatorio y debe existir | `400` (falta) / `404` `Tipo de consultorio no encontrado con id 99` |
 | Un consultorio nuevo, o que cambia de tipo, debe asignarse a un tipo **activo**. Al editar solo el nombre, conserva su tipo aunque esté desactivado | `400` `El tipo de consultorio 'Laboratorio' está desactivado` |
 | **No se puede desactivar un tipo con consultorios activos**: primero se desactivan sus consultorios | `409` `No se puede desactivar el tipo 'Rayos X': tiene 1 consultorio(s) activo(s). Desactiva primero sus consultorios` |
+| **No se puede desactivar un tipo que usan servicios activos**: primero se desactivan esos servicios o se les cambia el tipo. Los servicios inactivos no cuentan. Si hay consultorios y servicios activos, se avisa primero de los consultorios | `409` `No se puede desactivar el tipo 'Cirugía': lo usan 2 servicio(s) activo(s). Desactiva o cambia primero esos servicios` |
 | **No se puede reactivar un consultorio cuyo tipo está desactivado**: primero se reactiva el tipo | `409` `No se puede reactivar el consultorio 'Sala RX': su tipo 'Rayos X' está desactivado. Reactiva primero el tipo` |
 | Desactivar o reactivar dos veces seguidas no da error | |
 | **No hay `DELETE`:** las citas pasadas referencian los consultorios, así que solo se desactivan | |
 
 - Con estas reglas **nunca hay un consultorio activo de un tipo desactivado**.
-- **Relación con el módulo de servicios:** al crear o editar un servicio, solo se acepta un tipo de consultorio **activo**. Desactivar un tipo impide usarlo en servicios nuevos; los servicios que ya lo tenían se conservan.
+- **Relación con el módulo de servicios:** al crear o editar un servicio, solo se acepta un tipo de consultorio **activo**. Y un tipo que usan servicios activos **no se puede desactivar**, así que nunca hay un servicio activo apuntando a un tipo desactivado. Si se desactiva un servicio, o se le cambia el tipo, el tipo queda libre.
+- Sí se puede desactivar el último consultorio activo de un tipo que usan servicios (por ejemplo, por una remodelación). La agenda del Sprint 3 es la que avisará que no hay consultorio disponible para esos servicios.
 
 > **Pendiente (Sprint 3):** qué hacer con las citas futuras de un consultorio que se desactiva.
 

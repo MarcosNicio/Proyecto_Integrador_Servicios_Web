@@ -77,9 +77,13 @@ public class TipoConsultorioService {
 
     /**
      * Desactiva el tipo. Si ya estaba desactivado, no pasa nada.
+     * <p>
+     * No se puede desactivar mientras esté en uso: ni con consultorios activos, ni si lo requieren
+     * servicios activos (se revisan primero los consultorios). Así no queda un consultorio o un
+     * servicio activo apuntando a un tipo desactivado.
      *
      * @throws ResourceNotFoundException si no existe (404)
-     * @throws ConflictException         si todavía tiene consultorios activos (409)
+     * @throws ConflictException         si tiene consultorios activos o lo usan servicios activos (409)
      */
     @Transactional
     public void desactivar(Integer idTipo) {
@@ -87,10 +91,15 @@ public class TipoConsultorioService {
         if (!Boolean.TRUE.equals(tipo.getActivo())) {
             return;
         }
-        long activos = consultorioRepository.countByTipoConsultorioIdTipoConsultorioAndActivoTrue(idTipo);
-        if (activos > 0) {
+        long consultorios = consultorioRepository.countByTipoConsultorioIdTipoConsultorioAndActivoTrue(idTipo);
+        if (consultorios > 0) {
             throw new ConflictException("No se puede desactivar el tipo '" + tipo.getNombre() + "': tiene "
-                    + activos + " consultorio(s) activo(s). Desactiva primero sus consultorios");
+                    + consultorios + " consultorio(s) activo(s). Desactiva primero sus consultorios");
+        }
+        long servicios = tipoRepository.contarServiciosActivos(idTipo);
+        if (servicios > 0) {
+            throw new ConflictException("No se puede desactivar el tipo '" + tipo.getNombre() + "': lo usan "
+                    + servicios + " servicio(s) activo(s). Desactiva o cambia primero esos servicios");
         }
         tipo.setActivo(false);
     }
