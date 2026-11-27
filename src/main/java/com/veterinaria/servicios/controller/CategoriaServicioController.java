@@ -113,12 +113,13 @@ public class CategoriaServicioController {
     // Retorna ResponseEntity vacío con código HTTP 204 No Content.
     @DeleteMapping("/{idCategoria}")
     @PreAuthorize("hasRole('ADMIN')")
-    @Operation(summary = "Desactivar categoría de servicio", description = "Realiza la baja lógica de la categoría (activo = false) preservando el historial. Requiere rol ADMIN.")
+    @Operation(summary = "Desactivar categoría de servicio", description = "Realiza la baja lógica de la categoría (activo = false) preservando el historial. No se puede desactivar si todavía tiene servicios activos. Requiere rol ADMIN.")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Categoría desactivada correctamente"),
             @ApiResponse(responseCode = "401", description = "Token JWT ausente o inválido"),
             @ApiResponse(responseCode = "403", description = "Acceso denegado: se requiere rol ADMIN"),
-            @ApiResponse(responseCode = "404", description = "Categoría no encontrada")
+            @ApiResponse(responseCode = "404", description = "Categoría no encontrada"),
+            @ApiResponse(responseCode = "409", description = "La categoría todavía tiene servicios activos")
     })
     public ResponseEntity<Void> desactivarCategoria(
             @Parameter(description = "Identificador único de la categoría", example = "1")

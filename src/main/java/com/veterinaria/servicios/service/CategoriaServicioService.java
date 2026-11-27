@@ -6,6 +6,7 @@ import com.veterinaria.servicios.dto.CategoriaServicioRequestDTO;
 import com.veterinaria.servicios.dto.CategoriaServicioResponseDTO;
 import com.veterinaria.servicios.entity.CategoriaServicio;
 import com.veterinaria.servicios.repository.CategoriaServicioRepository;
+import com.veterinaria.servicios.repository.ServicioRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,6 +21,9 @@ public class CategoriaServicioService {
 
     // Repositorio JPA para operaciones CRUD y consultas sobre categorías de servicio
     private final CategoriaServicioRepository categoriaServicioRepository;
+
+    // Repositorio de servicios, para saber si una categoría todavía tiene servicios activos
+    private final ServicioRepository servicioRepository;
 
     // MÉTODOS PÚBLICOS DE NEGOCIO - CATEGORÍAS DE SERVICIO
 
@@ -86,10 +90,22 @@ public class CategoriaServicioService {
 
     // Realiza la baja lógica de una categoría marcando su estado como inactivo (activo = false).
     // Recibe idCategoria con el identificador de la categoría a desactivar. No retorna valor.
-    // Lanza ResourceNotFoundException si la categoría no existe.
+    // Si la categoría ya estaba desactivada no hace nada.
+    // Lanza ResourceNotFoundException si la categoría no existe y ConflictException si todavía tiene servicios activos
+    // (así nunca queda un servicio activo dentro de una categoría desactivada; primero se desactivan sus servicios).
     @Transactional
     public void desactivarCategoria(Integer idCategoria) {
         CategoriaServicio categoria = buscarCategoriaPorIdOError(idCategoria);
+        if (!Boolean.TRUE.equals(categoria.getActivo())) {
+            return;
+        }
+
+        long serviciosActivos = servicioRepository.countByCategoriaIdCategoriaAndActivoTrue(idCategoria);
+        if (serviciosActivos > 0) {
+            throw new ConflictException("No se puede desactivar la categoría '" + categoria.getNombre()
+                    + "': tiene " + serviciosActivos + " servicio(s) activo(s). Desactiva primero sus servicios");
+        }
+
         categoria.setActivo(false);
         categoriaServicioRepository.save(categoria);
     }

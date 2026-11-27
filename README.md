@@ -201,7 +201,7 @@ export DB_PASSWORD="tu_contraseña"
 Si todo sale bien, al final aparece:
 
 ```
-[INFO] Tests run: 211, Failures: 0, Errors: 0, Skipped: 0
+[INFO] Tests run: 252, Failures: 0, Errors: 0, Skipped: 0
 [INFO] BUILD SUCCESS
 ```
 
@@ -224,6 +224,9 @@ Si todo sale bien, al final aparece:
 | `auth.controller.AuthRegistroTest` | 13 | Registro: crea usuario y cliente vinculados, contraseña cifrada, token, login posterior, correo repetido y contraseñas débiles |
 | `auth.service.AuthRegistroTransaccionTest` | 1 | Si falla la creación del cliente, tampoco se guarda el usuario |
 | `personal.controller.PersonalControllerTest` | 19 | Personal: alta de veterinario y cajero, login del empleado nuevo, correo normalizado y repetido, cédula obligatoria, roles no permitidos, filtros, edición, desactivar/reactivar y permisos por rol |
+| `servicios.controller.CategoriaServicioControllerTest` | 11 | Categorías de servicio: lista con y sin inactivas, detalle y 404, alta, nombre repetido (409), validaciones, edición, desactivar (409 si tiene servicios activos), reactivar y permisos por rol |
+| `servicios.controller.ServicioControllerTest` | 13 | Catálogo de servicios: alta, tipo de consultorio activo / inexistente / desactivado, nombre repetido en la categoría, categoría inexistente o desactivada, validaciones, filtros de la lista, edición, desactivar y reactivar (400 si su categoría está inactiva) y permisos por rol |
+| `servicios.controller.TarifaServicioControllerTest` | 17 | Tarifas y cotización: alta con especie normalizada, rangos contiguos, traslapes (409), validaciones, lista y filtro por especie, edición, borrado, cotización en los bordes de los rangos, precio base cuando ningún rango aplica y permisos por rol |
 | `agenda.controller.ConsultorioControllerTest` | 15 | Consultorios: lista inicial y filtros por tipo y estado, detalle con nombre del tipo y 404, alta con nombre normalizado, nombre repetido (409), tipo inexistente (404) o desactivado (400), validaciones, edición (cambio de tipo, conservar el propio nombre, tipo desactivado), desactivar y reactivar, reactivar con el tipo desactivado (409) y permisos por rol |
 | `agenda.controller.TipoConsultorioControllerTest` | 12 | Tipos de consultorio: lista con conteo de consultorios activos y filtro por estado, alta, nombre repetido (409), validaciones, edición, desactivar un tipo (409 si tiene consultorios activos), reactivar, el tipo desactivado deja de pasar la consulta del módulo de servicios y permisos por rol |
 | `agenda.controller.HorarioClinicaControllerTest` | 19 | Horario de la clínica: consulta por cualquier rol con sesión, 401 sin sesión, guardado sin segundos, reenvío tal cual del `GET`, semana incompleta o con día repetido, día fuera de rango, campos faltantes, cierre antes de la apertura, hora inválida, turnos que quedarían fuera (409, no se guarda nada, lista de varios, más de diez) y permisos por rol |
@@ -777,6 +780,82 @@ $tCajero = (Invoke-Api POST "/auth/login" @{ correo = "ines.consultorios@veterin
 | 77. Reactivar | `200`, `200` |
 | 78. Cajero | `200` al consultar, `403` al crear |
 
+#### Servicios, tarifas y cotización
+
+Usa la misma función `Invoke-Api` y el `$token` del admin del caso 1. Los datos de prueba terminan en "Manual" para borrarlos al final.
+
+```powershell
+# 79. Listar las categorías → las 5 iniciales: Consulta General, Vacunación, Estética, Urgencia y Cirugía
+(Invoke-Api GET "/categorias-servicio" -Token $token).Respuesta | Select-Object idCategoria, nombre, activo
+
+# 80. Crear una categoría → 201; repetida con otras mayúsculas y espacios → 409
+$cat = Invoke-Api POST "/categorias-servicio" @{ nombre = "Radiografías Manual"; descripcion = "Imagen" } $token
+$cat.Codigo
+$idCat = $cat.Respuesta.idCategoria
+(Invoke-Api POST "/categorias-servicio" @{ nombre = " RADIOGRAFÍAS manual " } $token).Codigo
+
+# 81. Crear un servicio con tipo de consultorio activo → 201; repetido → 409; duración 0 → 400; categoría inexistente → 404
+$idTipoConsulta = ((Invoke-Api GET "/consultorios/tipos" -Token $token).Respuesta | Where-Object nombre -eq "Consulta").idTipoConsultorio
+$srv = Invoke-Api POST "/servicios" @{ idCategoria = $idCat; nombre = "Radiografía simple Manual"; descripcion = "Una placa"; duracionMinutos = 20; precioBase = 300.50; idTipoConsultorio = $idTipoConsulta } $token
+$srv.Codigo
+$idSrv = $srv.Respuesta.idServicio
+(Invoke-Api POST "/servicios" @{ idCategoria = $idCat; nombre = "radiografía simple manual"; duracionMinutos = 20; precioBase = 100 } $token).Codigo
+(Invoke-Api POST "/servicios" @{ idCategoria = $idCat; nombre = "Otra Manual"; duracionMinutos = 0; precioBase = 100 } $token).Codigo
+(Invoke-Api POST "/servicios" @{ idCategoria = 999999; nombre = "Otra Manual"; duracionMinutos = 20; precioBase = 100 } $token).Codigo
+
+# 82. Un tipo de consultorio desactivado no se acepta en un servicio → 404 (integración con consultorios)
+$idTipoOff = (Invoke-Api POST "/consultorios/tipos" @{ nombre = "Tipo Desactivado Manual" } $token).Respuesta.idTipoConsultorio
+$null = Invoke-Api PATCH "/consultorios/tipos/$idTipoOff/desactivar" -Token $token
+(Invoke-Api POST "/servicios" @{ idCategoria = $idCat; nombre = "Con tipo apagado Manual"; duracionMinutos = 20; precioBase = 100; idTipoConsultorio = $idTipoOff } $token).Respuesta.message
+
+# 83. Tarifas de Perro: 0-10 y 10-25 → 201 y 201 (contiguas); 5-15 se encima → 409
+$t1 = Invoke-Api POST "/servicios/$idSrv/tarifas" @{ especie = "perro"; pesoMinKg = 0; pesoMaxKg = 10; precioCalculado = 210 } $token
+$t1.Codigo
+$t1.Respuesta.especie
+(Invoke-Api POST "/servicios/$idSrv/tarifas" @{ especie = "Perro"; pesoMinKg = 10; pesoMaxKg = 25; precioCalculado = 350 } $token).Codigo
+(Invoke-Api POST "/servicios/$idSrv/tarifas" @{ especie = "Perro"; pesoMinKg = 5; pesoMaxKg = 15; precioCalculado = 1 } $token).Respuesta.message
+
+# 84. Cotizar: 5 kg → 210; 10 kg → 350; 25 kg y 40 kg → precio base; hámster → precio base
+foreach ($caso in @(@("Perro", 5), @("Perro", 10), @("Perro", 25), @("Perro", 40), @("Hámster", 1))) {
+    $c = (Invoke-Api GET "/servicios/$idSrv/calcular-precio?especie=$($caso[0])&pesoKg=$($caso[1])" -Token $token).Respuesta
+    "{0} {1} kg -> {2} (tarifaAplicada: {3})" -f $caso[0], $caso[1], $c.precioFinal, $c.tarifaAplicada
+}
+
+# 85. Cubrir los pesos altos con otro rango (25-100 = 500) → 201; ahora 25 kg y 40 kg cobran 500
+(Invoke-Api POST "/servicios/$idSrv/tarifas" @{ especie = "Perro"; pesoMinKg = 25; pesoMaxKg = 100; precioCalculado = 500 } $token).Codigo
+(Invoke-Api GET "/servicios/$idSrv/calcular-precio?especie=Perro&pesoKg=40" -Token $token).Respuesta.precioFinal
+
+# 86. Desactivar la categoría con el servicio activo → 409; desactivar el servicio → 204; ahora la categoría → 204
+(Invoke-Api DELETE "/categorias-servicio/$idCat" -Token $token).Respuesta.message
+(Invoke-Api DELETE "/servicios/$idSrv" -Token $token).Codigo
+(Invoke-Api DELETE "/categorias-servicio/$idCat" -Token $token).Codigo
+
+# 87. Con la categoría desactivada: no se reactiva el servicio (400); se reactiva la categoría (200) y luego el servicio (200)
+(Invoke-Api PATCH "/servicios/$idSrv/reactivar" -Token $token).Respuesta.message
+(Invoke-Api PATCH "/categorias-servicio/$idCat/reactivar" -Token $token).Codigo
+(Invoke-Api PATCH "/servicios/$idSrv/reactivar" -Token $token).Codigo
+
+# 88. Un cajero consulta y cotiza (200), pero no puede crear (403)
+$null = Invoke-Api POST "/personal" @{ correo = "rosa.servicios@veterinaria.com"; password = "Inicial123"; rol = "CAJERO"; nombre = "Rosa"; apellidos = "Servicios"; telefono = "5553332222" } $token
+$tCajero = (Invoke-Api POST "/auth/login" @{ correo = "rosa.servicios@veterinaria.com"; password = "Inicial123" }).Respuesta.token
+(Invoke-Api GET "/servicios" -Token $tCajero).Codigo
+(Invoke-Api GET "/servicios/$idSrv/calcular-precio?especie=Perro&pesoKg=5" -Token $tCajero).Codigo
+(Invoke-Api POST "/servicios" @{ idCategoria = $idCat; nombre = "Cajero Manual"; duracionMinutos = 20; precioBase = 100 } $tCajero).Codigo
+```
+
+| Caso | Resultado esperado |
+|---|---|
+| 79. Categorías | Consulta General, Vacunación, Estética, Urgencia y Cirugía |
+| 80. Crear categoría | `201` y `409` |
+| 81. Crear servicio | `201`, `409`, `400`, `404` |
+| 82. Tipo desactivado | `No se encontró un tipo de consultorio activo con ID: …` |
+| 83. Tarifas | `201` y `PERRO`; `201` (10-25 contigua); `El rango de peso (5 kg - 15 kg) para la especie 'PERRO' se traslapa con una tarifa existente en este servicio` |
+| 84. Cotizar | Perro 5 kg `210` (true); Perro 10 kg `350` (true); Perro 25 kg `300.50` (false); Perro 40 kg `300.50` (false); Hámster 1 kg `300.50` (false) |
+| 85. Cubrir pesos altos | `201` y `500` |
+| 86. Desactivar | `No se puede desactivar la categoría 'Radiografías Manual': tiene 1 servicio(s) activo(s). Desactiva primero sus servicios`, `204`, `204` |
+| 87. Reactivar | `No se puede reactivar el servicio porque su categoría 'Radiografías Manual' se encuentra inactiva`, `200`, `200` |
+| 88. Cajero | `200`, `200`, `403` |
+
 #### Borrar las cuentas de prueba
 
 Las pruebas manuales **sí guardan datos**. Para borrar una cuenta de prueba (primero su perfil de cliente, después el usuario):
@@ -803,10 +882,16 @@ Para los tipos y consultorios de prueba (la API no los borra, solo los desactiva
 psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM consultorios WHERE nombre LIKE '%Manual'; DELETE FROM tipos_consultorio WHERE nombre LIKE '%Manual';"
 ```
 
+Para los servicios y categorías de prueba (la API no los borra, solo los desactiva; sus tarifas se borran solas). Se borran primero los servicios, después las categorías y, al final, el tipo de consultorio de prueba:
+
+```bash
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM servicios WHERE nombre LIKE '%Manual'; DELETE FROM categorias_servicio WHERE nombre LIKE '%Manual'; DELETE FROM tipos_consultorio WHERE nombre LIKE '%Manual';"
+```
+
 Para el personal de prueba basta con borrar sus usuarios: su perfil, turnos y bloqueos se borran solos (`ON DELETE CASCADE`):
 
 ```bash
-psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com', 'sofia.bloqueos@veterinaria.com', 'caja.me@veterinaria.com', 'marta.clinica@veterinaria.com', 'nora.turnos@veterinaria.com', 'ines.consultorios@veterinaria.com');"
+psql -U postgres -h localhost -p 5433 -d veterinaria_db -c "DELETE FROM usuarios WHERE correo IN ('laura.prueba@veterinaria.com', 'pedro.prueba@veterinaria.com', 'mario.horarios@veterinaria.com', 'sofia.bloqueos@veterinaria.com', 'caja.me@veterinaria.com', 'marta.clinica@veterinaria.com', 'nora.turnos@veterinaria.com', 'ines.consultorios@veterinaria.com', 'rosa.servicios@veterinaria.com');"
 ```
 
 ## Documentación de la API (Swagger UI)
@@ -1602,3 +1687,140 @@ POST /api/consultorios
 - **Relación con el módulo de servicios:** al crear o editar un servicio, solo se acepta un tipo de consultorio **activo**. Desactivar un tipo impide usarlo en servicios nuevos; los servicios que ya lo tenían se conservan.
 
 > **Pendiente (Sprint 3):** qué hacer con las citas futuras de un consultorio que se desactiva.
+
+## Módulo de servicios (`servicios`)
+
+El catálogo de lo que ofrece la clínica (consulta, vacuna, baño…), agrupado en categorías, con su precio base y, opcionalmente, **tarifas distintas según la especie y el peso** de la mascota. La agenda del Sprint 3 usará la duración y el tipo de consultorio de cada servicio, y la cotización calcula el precio de una cita.
+
+### Entidades
+
+| Entidad | Tabla | Qué guarda |
+|---|---|---|
+| `CategoriaServicio` | `CATEGORIAS_SERVICIO` | Agrupa servicios (Consulta General, Vacunación, Estética, Urgencia, Cirugía): nombre único, descripción y si está activa |
+| `Servicio` | `SERVICIOS` | Nombre, descripción, duración en minutos, precio base, categoría, tipo de consultorio que requiere (opcional) y si está activo |
+| `TarifaServicio` | `TARIFAS_SERVICIO` | Precio de un servicio para una especie y un rango de peso |
+
+### Categorías: `/api/categorias-servicio`
+
+| Método y ruta | Quién | Qué hace | Respuesta |
+|---|---|---|---|
+| `GET /api/categorias-servicio` | Cualquier usuario con sesión | Lista las activas. Con `?incluirInactivas=true`, todas | `200` |
+| `GET /api/categorias-servicio/{id}` | Cualquier usuario con sesión | Detalle | `200` / `404` |
+| `POST /api/categorias-servicio` | ADMIN | Crea una categoría | `201` |
+| `PUT /api/categorias-servicio/{id}` | ADMIN | Edita nombre y descripción | `200` |
+| `DELETE /api/categorias-servicio/{id}` | ADMIN | Desactiva la categoría (baja lógica) | `204` |
+| `PATCH /api/categorias-servicio/{id}/reactivar` | ADMIN | La reactiva | `200` |
+
+### Servicios: `/api/servicios`
+
+| Método y ruta | Quién | Qué hace | Respuesta |
+|---|---|---|---|
+| `GET /api/servicios` | Cualquier usuario con sesión | Lista los activos. Filtros opcionales: `?idCategoria=`, `?nombre=` (parte del nombre) e `?incluirInactivos=true` | `200` |
+| `GET /api/servicios/{id}` | Cualquier usuario con sesión | Detalle, con sus tarifas | `200` / `404` |
+| `POST /api/servicios` | ADMIN | Crea un servicio | `201` |
+| `PUT /api/servicios/{id}` | ADMIN | Edita un servicio | `200` |
+| `DELETE /api/servicios/{id}` | ADMIN | Desactiva el servicio (baja lógica) | `204` |
+| `PATCH /api/servicios/{id}/reactivar` | ADMIN | Lo reactiva | `200` |
+
+```json
+POST /api/servicios
+{
+  "idCategoria": 2,
+  "nombre": "Vacuna antirrábica",
+  "descripcion": "Dosis anual",
+  "duracionMinutos": 15,
+  "precioBase": 300.50,
+  "idTipoConsultorio": 1
+}
+```
+
+`idTipoConsultorio` es opcional: es el tipo de consultorio que necesita el servicio (ver [Tipos de consultorio](#tipos-de-consultorio)).
+
+### Tarifas por especie y peso
+
+| Método y ruta | Quién | Qué hace | Respuesta |
+|---|---|---|---|
+| `POST /api/servicios/{id}/tarifas` | ADMIN | Agrega una tarifa | `201` |
+| `GET /api/servicios/{id}/tarifas` | Cualquier usuario con sesión | Lista las tarifas, por especie y peso. Filtro opcional `?especie=` | `200` |
+| `PUT /api/servicios/{id}/tarifas/{idTarifa}` | ADMIN | Edita una tarifa | `200` |
+| `DELETE /api/servicios/{id}/tarifas/{idTarifa}` | ADMIN | Borra una tarifa | `204` |
+
+```json
+POST /api/servicios/5/tarifas
+{ "especie": "Perro", "pesoMinKg": 0, "pesoMaxKg": 10, "precioCalculado": 210.00 }
+```
+
+La especie se guarda en mayúsculas y sin espacios (`" perro "` → `PERRO`).
+
+#### Cómo se cuentan los rangos de peso
+
+Cada rango **incluye su peso mínimo pero no el máximo**: `[mín, máx)`. El peso máximo de un rango es el inicio del siguiente. Así, los rangos se escriben tal como se piensan, sin truco:
+
+| Rango | Incluye |
+|---|---|
+| `0` a `10` | desde 0 kg hasta justo antes de 10 kg |
+| `10` a `25` | desde 10 kg (inclusive) hasta justo antes de 25 kg |
+
+- **0-10 y 10-25 no se traslapan**: un perro de exactamente 10 kg cuenta en el segundo rango.
+- **0-10 y 5-15 sí se traslapan** (`409`), igual que dos rangos que se cubren total o parcialmente.
+- Cada especie tiene sus propios rangos: un gato de 0 a 10 kg no choca con un perro de 0 a 10 kg. Tampoco chocan los rangos de servicios distintos.
+- **El peso máximo de un rango nunca cuenta dentro de él.** Si el último rango es 10-25, un perro de exactamente 25 kg no entra y se cobra el precio base. Para cubrir los pesos altos hay que agregar otro rango (por ejemplo `25` a `100`) o hacer más grande el último.
+- Los pesos van de 0 a 999.99 kg, con máximo 2 decimales.
+
+### Cotización: `GET /api/servicios/{id}/calcular-precio`
+
+Cualquier usuario con sesión. Recibe la especie y el peso (`?especie=Perro&pesoKg=12`):
+
+1. Busca una tarifa de esa especie (sin importar mayúsculas) cuyo rango incluya el peso.
+2. Si la hay, ese es el precio.
+3. Si no hay ninguna, **se cobra el precio base** del servicio.
+
+```json
+{
+  "idServicio": 5,
+  "nombreServicio": "Vacuna antirrábica",
+  "especie": "PERRO",
+  "pesoKg": 12,
+  "precioBase": 300.50,
+  "precioFinal": 350.00,
+  "tarifaAplicada": true,
+  "idTarifaAplicada": 8,
+  "rangoAplicado": "10.00 kg - 25.00 kg"
+}
+```
+
+`tarifaAplicada` indica si se usó una tarifa o el precio base (`false`, y entonces `idTarifaAplicada` y `rangoAplicado` vienen vacíos).
+
+Ejemplo con precio base de $300.50 y las tarifas de Perro `0-10` = $210 y `10-25` = $350:
+
+| Cotización | Precio | Por qué |
+|---|---|---|
+| Perro 5 kg | $210 | Está en 0-10 |
+| Perro 10 kg | $350 | El 10 ya es del rango 10-25 |
+| Perro 24.99 kg | $350 | Está en 10-25 |
+| Perro 25 kg | $300.50 | El 25 no está en ningún rango: precio base |
+| Perro 40 kg | $300.50 | Ningún rango lo cubre: precio base |
+| Hámster 1 kg | $300.50 | No hay tarifas de esa especie: precio base |
+
+> El precio base funciona como el precio "para todo lo demás". Elige uno que tenga sentido como valor por defecto y define un último rango alto para las especies que varían por peso.
+
+### Reglas
+
+| Regla | Si no se cumple |
+|---|---|
+| Los nombres de categoría (máximo 80 caracteres) no se repiten, sin importar mayúsculas ni espacios | `409` |
+| Un servicio no repite nombre dentro de su categoría (en otra categoría sí puede) | `409` |
+| La categoría de un servicio debe existir y estar activa | `404` (no existe) / `400` (inactiva) |
+| Duración de 1 a 1440 minutos; precio base de 0 con máximo 8 enteros y 2 decimales | `400`, `errors.<campo>` |
+| El tipo de consultorio de un servicio debe existir y estar **activo** | `404` `No se encontró un tipo de consultorio activo con ID: 7` |
+| **No se puede desactivar una categoría con servicios activos**: primero se desactivan sus servicios | `409` `No se puede desactivar la categoría 'Estética': tiene 2 servicio(s) activo(s). Desactiva primero sus servicios` |
+| No se puede reactivar un servicio cuya categoría está inactiva | `400` |
+| Tarifa: peso mínimo desde 0, peso máximo mayor al mínimo, precio desde 0, especie obligatoria | `400` |
+| Tarifa: el rango no se traslapa con otro de la misma especie en el mismo servicio | `409` `El rango de peso (5 kg - 15 kg) para la especie 'PERRO' se traslapa con una tarifa existente en este servicio` |
+| Al editar una tarifa, no se compara consigo misma | |
+| Cotizar: el peso es mayor a 0 y el servicio está activo | `400` |
+| Desactivar un servicio o una categoría dos veces seguidas no da error | |
+| **No se borran servicios ni categorías:** se desactivan, para conservar el historial | |
+
+- **Con estas reglas nunca hay un servicio activo dentro de una categoría desactivada.**
+- Los servicios inactivos no aparecen en la lista salvo con `incluirInactivos=true`.

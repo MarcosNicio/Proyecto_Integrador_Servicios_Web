@@ -32,12 +32,12 @@ public class TarifaServicioResponseDTO {
     @Schema(description = "Especie animal a la que aplica la tarifa", example = "PERRO")
     private String especie;
 
-    // Peso mínimo inclusivo en kilogramos
-    @Schema(description = "Límite inferior del rango de peso en kilogramos", example = "0.00")
+    // Peso mínimo en kilogramos (este peso sí pertenece al rango)
+    @Schema(description = "Límite inferior del rango de peso en kilogramos (incluido)", example = "0.00")
     private BigDecimal pesoMinKg;
 
-    // Peso máximo inclusivo en kilogramos
-    @Schema(description = "Límite superior del rango de peso en kilogramos", example = "10.00")
+    // Peso máximo en kilogramos (este peso no pertenece al rango: es el inicio del siguiente)
+    @Schema(description = "Límite superior del rango de peso en kilogramos (no incluido)", example = "10.00")
     private BigDecimal pesoMaxKg;
 
     // Precio calculado para esta regla

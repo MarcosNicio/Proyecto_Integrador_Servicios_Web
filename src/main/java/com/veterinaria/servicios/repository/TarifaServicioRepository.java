@@ -23,14 +23,16 @@ public interface TarifaServicioRepository extends JpaRepository<TarifaServicio, 
     );
 
     // Verifica si existe algún solapamiento (traslape) de rangos de peso para un mismo servicio y especie.
+    // Los rangos incluyen su límite inferior pero no el superior: [min, max). Por eso 0-10 y 10-25 NO se traslapan
+    // (el 10 pertenece al segundo) y 0-10 con 5-15 sí. Dos rangos se traslapan si cada uno empieza antes de que termine el otro.
     // Permite excluir un ID de tarifa en operaciones de actualización.
     @Query("""
             SELECT COUNT(t) > 0 FROM TarifaServicio t
             WHERE t.servicio.idServicio = :idServicio
               AND LOWER(t.especie) = LOWER(:especie)
               AND (:idTarifaExcluir IS NULL OR t.idTarifa <> :idTarifaExcluir)
-              AND t.pesoMinKg <= :pesoMaxKg
-              AND t.pesoMaxKg >= :pesoMinKg
+              AND t.pesoMinKg < :pesoMaxKg
+              AND t.pesoMaxKg > :pesoMinKg
             """)
     boolean existeTraslape(
             @Param("idServicio") Integer idServicio,
@@ -42,12 +44,14 @@ public interface TarifaServicioRepository extends JpaRepository<TarifaServicio, 
 
     // Busca la regla tarifaria aplicable para un servicio, especie y peso específico en kilogramos.
     // Compara la especie de forma insensible a mayúsculas/minúsculas y valida que el peso
-    // caiga dentro del intervalo inclusivo [pesoMinKg, pesoMaxKg].
+    // caiga dentro del intervalo [pesoMinKg, pesoMaxKg): incluye el límite inferior y excluye el superior,
+    // que pertenece al rango siguiente.
     @Query("""
             SELECT t FROM TarifaServicio t
             WHERE t.servicio.idServicio = :idServicio
               AND LOWER(t.especie) = LOWER(:especie)
-              AND :pesoKg BETWEEN t.pesoMinKg AND t.pesoMaxKg
+              AND :pesoKg >= t.pesoMinKg
+              AND :pesoKg < t.pesoMaxKg
             """)
     Optional<TarifaServicio> findTarifaAplicable(
             @Param("idServicio") Integer idServicio,
