@@ -4,6 +4,10 @@ import com.veterinaria.agenda.entity.Consultorio;
 import com.veterinaria.agenda.entity.TipoConsultorio;
 import com.veterinaria.agenda.repository.ConsultorioRepository;
 import com.veterinaria.agenda.repository.TipoConsultorioRepository;
+import com.veterinaria.servicios.entity.CategoriaServicio;
+import com.veterinaria.servicios.entity.Servicio;
+import com.veterinaria.servicios.repository.CategoriaServicioRepository;
+import com.veterinaria.servicios.repository.ServicioRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -16,9 +20,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.math.BigDecimal;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.anonymous;
@@ -36,6 +42,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * {@code @WithMockUser} simula al usuario que hace la petición (por defecto un ADMIN).
  * {@code @Transactional} deshace al final de cada prueba los tipos y consultorios creados.
  * Cada prueba parte de un tipo propio, "Rayos X Prueba", con un consultorio activo y otro desactivado.
+ * Para probar que un tipo en uso no se desactiva, algunas pruebas guardan servicios que lo requieren.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -56,6 +63,12 @@ class TipoConsultorioControllerTest {
 
     @Autowired
     private JdbcTemplate jdbcTemplate;
+
+    @Autowired
+    private CategoriaServicioRepository categoriaServicioRepository;
+
+    @Autowired
+    private ServicioRepository servicioRepository;
 
     private TipoConsultorio rayosX;
     private Consultorio salaActiva;
@@ -177,6 +190,66 @@ class TipoConsultorioControllerTest {
     }
 
     @Test
+    void unTipoUsadoPorServiciosActivosNoSeDesactivaHastaDesactivarElServicio() throws Exception {
+        TipoConsultorio sinSalas = tipoRepository.save(TipoConsultorio.builder().nombre("Sin Salas Prueba").build());
+        Servicio servicio = servicioQueUsa(sinSalas, "Servicio en uso Prueba", true);
+        String url = URL + "/" + sinSalas.getIdTipoConsultorio();
+
+        mockMvc.perform(patch(url + "/desactivar"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message").value("No se puede desactivar el tipo 'Sin Salas Prueba': lo usan 1 "
+                        + "servicio(s) activo(s). Desactiva o cambia primero esos servicios"));
+        assertThat(tipoRepository.findById(sinSalas.getIdTipoConsultorio()).orElseThrow().getActivo()).isTrue();
+
+        servicio.setActivo(false);
+        servicioRepository.saveAndFlush(servicio);
+        mockMvc.perform(patch(url + "/desactivar")).andExpect(status().isNoContent());
+        assertThat(tipoRepository.findById(sinSalas.getIdTipoConsultorio()).orElseThrow().getActivo()).isFalse();
+    }
+
+    @Test
+    void losServiciosInactivosNoImpidenDesactivarElTipo() throws Exception {
+        TipoConsultorio sinSalas = tipoRepository.save(TipoConsultorio.builder().nombre("Sin Salas Prueba").build());
+        servicioQueUsa(sinSalas, "Servicio viejo Prueba", false);
+
+        mockMvc.perform(patch(URL + "/" + sinSalas.getIdTipoConsultorio() + "/desactivar"))
+                .andExpect(status().isNoContent());
+    }
+
+    @Test
+    void cambiarElServicioAOtroTipoOQuitarleElTipoTambienLiberaElTipo() throws Exception {
+        TipoConsultorio sinSalas = tipoRepository.save(TipoConsultorio.builder().nombre("Sin Salas Prueba").build());
+        Servicio servicio = servicioQueUsa(sinSalas, "Servicio movido Prueba", true);
+        String url = URL + "/" + sinSalas.getIdTipoConsultorio();
+
+        mockMvc.perform(patch(url + "/desactivar")).andExpect(status().isConflict());
+
+        servicio.setIdTipoConsultorio(tipoRepository.findByNombreIgnoreCase("Consulta").orElseThrow().getIdTipoConsultorio());
+        servicioRepository.saveAndFlush(servicio);
+        mockMvc.perform(patch(url + "/desactivar")).andExpect(status().isNoContent());
+    }
+
+    @Test
+    void conConsultoriosYServiciosActivosSeAvisaPrimeroDeLosConsultoriosYDespuesDeLosServicios() throws Exception {
+        Servicio servicio = servicioQueUsa(rayosX, "Radiografía Prueba", true);
+        String url = URL + "/" + rayosX.getIdTipoConsultorio();
+
+        mockMvc.perform(patch(url + "/desactivar"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", containsString("consultorio(s) activo(s)")));
+
+        salaActiva.setActivo(false);
+        consultorioRepository.saveAndFlush(salaActiva);
+        mockMvc.perform(patch(url + "/desactivar"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.message", containsString("lo usan 1 servicio(s) activo(s)")));
+
+        servicio.setActivo(false);
+        servicioRepository.saveAndFlush(servicio);
+        mockMvc.perform(patch(url + "/desactivar")).andExpect(status().isNoContent());
+    }
+
+    @Test
     void desactivarYReactivarDosVecesSeguidasNoDaError() throws Exception {
         TipoConsultorio sinConsultorios = tipoRepository.save(TipoConsultorio.builder().nombre("Vacío Prueba").build());
         String url = URL + "/" + sinConsultorios.getIdTipoConsultorio();
@@ -227,6 +300,15 @@ class TipoConsultorioControllerTest {
     }
 
     // ---------- Ayudantes ----------
+
+    /** Guarda un servicio que requiere el tipo de consultorio indicado. */
+    private Servicio servicioQueUsa(TipoConsultorio tipo, String nombre, boolean activo) {
+        CategoriaServicio categoria = categoriaServicioRepository.save(
+                CategoriaServicio.builder().nombre("Categoría de " + nombre).build());
+        return servicioRepository.saveAndFlush(Servicio.builder()
+                .categoria(categoria).nombre(nombre).duracionMinutos(30).precioBase(new BigDecimal("100.00"))
+                .idTipoConsultorio(tipo.getIdTipoConsultorio()).activo(activo).build());
+    }
 
     private ResultActions enviar(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder metodo,
                                  String cuerpo) throws Exception {

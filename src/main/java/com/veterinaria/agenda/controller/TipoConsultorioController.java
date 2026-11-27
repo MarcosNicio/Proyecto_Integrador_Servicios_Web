@@ -86,12 +86,12 @@ public class TipoConsultorioController {
     @PreAuthorize("hasRole('ADMIN')")
     @Operation(summary = "Desactivar un tipo de consultorio",
             description = "El tipo deja de aceptarse en servicios y consultorios nuevos. No se puede desactivar "
-                    + "si todavía tiene consultorios activos.")
+                    + "si todavía tiene consultorios activos o lo usan servicios activos.")
     @ApiResponses({
             @ApiResponse(responseCode = "204", description = "Tipo desactivado"),
             @ApiResponse(responseCode = "403", description = "Solo el administrador gestiona los tipos"),
             @ApiResponse(responseCode = "404", description = "Tipo no encontrado"),
-            @ApiResponse(responseCode = "409", description = "El tipo tiene consultorios activos")
+            @ApiResponse(responseCode = "409", description = "El tipo tiene consultorios activos o lo usan servicios activos")
     })
     public ResponseEntity<Void> desactivar(
             @Parameter(description = "Identificador del tipo", example = "1") @PathVariable Integer idTipo) {
