@@ -19,6 +19,9 @@ public interface ServicioRepository extends JpaRepository<Servicio, Integer> {
     // Lista únicamente los servicios activos asociados a una categoría específica.
     List<Servicio> findByCategoriaIdCategoriaAndActivoTrue(Integer idCategoria);
 
+    // Cuenta los servicios activos de una categoría (una categoría con servicios activos no se desactiva).
+    long countByCategoriaIdCategoriaAndActivoTrue(Integer idCategoria);
+
     // Busca servicios activos cuyo nombre contenga el texto especificado (sin distinguir mayúsculas).
     List<Servicio> findByNombreContainingIgnoreCaseAndActivoTrue(String nombre);
 

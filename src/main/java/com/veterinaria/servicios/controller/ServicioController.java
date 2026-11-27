@@ -164,7 +164,7 @@ public class ServicioController {
     // Retorna ResponseEntity con código HTTP 201 Created y la tarifa registrada.
     @PostMapping("/{idServicio}/tarifas")
     @PreAuthorize("hasRole('ADMIN')")
-    @Operation(summary = "Crear tarifa dinámica para un servicio", description = "Agrega una regla tarifaria por especie y rango de peso validando consistencia y ausencia de traslapes. Requiere rol ADMIN.")
+    @Operation(summary = "Crear tarifa dinámica para un servicio", description = "Agrega una regla tarifaria por especie y rango de peso validando consistencia y ausencia de traslapes. El rango incluye su peso mínimo pero no el máximo (0-10 y 10-25 no se traslapan). Requiere rol ADMIN.")
     @ApiResponses({
             @ApiResponse(responseCode = "201", description = "Tarifa creada exitosamente"),
             @ApiResponse(responseCode = "400", description = "Datos o rango de pesos inválidos"),

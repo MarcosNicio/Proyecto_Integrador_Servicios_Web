@@ -36,14 +36,14 @@ public class TarifaServicioRequestDTO {
     @NotNull(message = "El peso mínimo en kg es obligatorio")
     @DecimalMin(value = "0.00", message = "El peso mínimo no puede ser negativo")
     @Digits(integer = 3, fraction = 2, message = "El peso mínimo debe tener máximo 3 dígitos enteros y 2 decimales")
-    @Schema(description = "Límite inferior inclusivo del rango de peso en kilogramos", example = "0.00", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "Límite inferior del rango de peso en kilogramos. Este peso SÍ pertenece al rango", example = "0.00", requiredMode = Schema.RequiredMode.REQUIRED)
     private BigDecimal pesoMinKg;
 
-    // Límite superior del rango de peso en kilogramos (debe ser estrictamente mayor a pesoMinKg)
+    // Límite superior del rango de peso en kilogramos (debe ser estrictamente mayor a pesoMinKg); el rango es [pesoMinKg, pesoMaxKg)
     @NotNull(message = "El peso máximo en kg es obligatorio")
     @DecimalMin(value = "0.01", message = "El peso máximo debe ser mayor a 0 kg")
     @Digits(integer = 3, fraction = 2, message = "El peso máximo debe tener máximo 3 dígitos enteros y 2 decimales")
-    @Schema(description = "Límite superior inclusivo del rango de peso en kilogramos", example = "10.00", requiredMode = Schema.RequiredMode.REQUIRED)
+    @Schema(description = "Límite superior del rango de peso en kilogramos. Este peso NO pertenece al rango: es el inicio del siguiente (0-10 y 10-25 no se traslapan)", example = "10.00", requiredMode = Schema.RequiredMode.REQUIRED)
     private BigDecimal pesoMaxKg;
 
     // Precio calculado para el rango de peso y especie indicados (mayor o igual a 0.00)
