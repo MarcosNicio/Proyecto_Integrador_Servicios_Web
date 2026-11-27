@@ -12,6 +12,7 @@ import com.veterinaria.clientes.repository.ClienteRepository;
 import com.veterinaria.clientes.repository.ResponsableExtraRepository;
 import com.veterinaria.common.exception.BusinessException;
 import com.veterinaria.common.exception.ConflictException;
+import com.veterinaria.common.exception.ForbiddenException;
 import com.veterinaria.common.exception.ResourceNotFoundException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -37,6 +38,9 @@ public class ClienteService {
     // Servicio de mascotas reutilizado para mapear mascotas sin duplicar lógica
     private final MascotaService mascotaService;
 
+    // Validador de pertenencia para operaciones realizadas por usuarios con rol CLIENTE
+    private final ValidadorAccesoCliente validadorAccesoCliente;
+
     // =========================================================================
     // MÉTODOS PÚBLICOS DE NEGOCIO - CLIENTES
     // =========================================================================
@@ -60,6 +64,7 @@ public class ClienteService {
     public ClienteResponseDTO obtenerPorId(Integer idCliente) {
         // Busca el cliente por su llave primaria o lanza excepción 404
         Cliente cliente = buscarClientePorIdOError(idCliente);
+        validadorAccesoCliente.validarAccesoACliente(cliente);
         return mapearAClienteResponseDTO(cliente);
     }
 
@@ -73,6 +78,9 @@ public class ClienteService {
 
     @Transactional(readOnly = true)
     public ClienteResponseDTO obtenerPorIdUsuario(Integer idUsuario) {
+        // Si es CLIENTE, verifica primero que solo consulte su propio ID de usuario
+        validadorAccesoCliente.validarAccesoPorIdUsuario(idUsuario);
+
         // Busca el perfil de cliente asociado al ID de usuario autenticado
         Cliente cliente = clienteRepository.findByIdUsuario(idUsuario)
                 .orElseThrow(() -> new ResourceNotFoundException(
@@ -96,13 +104,24 @@ public class ClienteService {
 
     @Transactional
     public ClienteResponseDTO actualizarCliente(Integer idCliente, ClienteRequestDTO dto) {
-        // Verifica que el cliente exista y que el ID de usuario no choque con otro
-        // registro
+        // Verifica que el cliente exista y que el usuario autenticado tenga permiso sobre él
         Cliente clienteExistente = buscarClientePorIdOError(idCliente);
-        validarDisponibilidadUsuario(dto.getIdUsuario(), idCliente);
+        validadorAccesoCliente.validarAccesoACliente(clienteExistente);
+
+        Integer idUsuarioFinal = dto.getIdUsuario();
+        if (validadorAccesoCliente.esClienteAutenticado()) {
+            // Un CLIENTE no puede reasignar ni desvincular el idUsuario de su propio perfil
+            if (dto.getIdUsuario() != null && !dto.getIdUsuario().equals(clienteExistente.getIdUsuario())) {
+                throw new ForbiddenException("No tienes permiso para cambiar la cuenta de usuario vinculada");
+            }
+            idUsuarioFinal = clienteExistente.getIdUsuario();
+        } else {
+            validarDisponibilidadUsuario(idUsuarioFinal, idCliente);
+        }
 
         // Actualiza los datos utilizando la función auxiliar común
         aplicarDatosCliente(clienteExistente, dto);
+        clienteExistente.setIdUsuario(idUsuarioFinal);
 
         Cliente clienteActualizado = clienteRepository.save(clienteExistente);
         return mapearAClienteResponseDTO(clienteActualizado);
@@ -111,8 +130,9 @@ public class ClienteService {
     // MÉTODOS PÚBLICOS DE NEGOCIO - RESPONSABLES EXTRA (CONTACTOS DE EMERGENCIA)
     @Transactional
     public ResponsableExtraResponseDTO agregarResponsableExtra(Integer idCliente, ResponsableExtraRequestDTO dto) {
-        // Valida que el cliente titular exista
+        // Valida que el cliente titular exista y pertenezca al usuario si es CLIENTE
         Cliente cliente = buscarClientePorIdOError(idCliente);
+        validadorAccesoCliente.validarAccesoACliente(cliente);
 
         // Crea el nuevo contacto y aplica los datos mediante función auxiliar
         // reutilizable
@@ -125,8 +145,9 @@ public class ClienteService {
 
     @Transactional(readOnly = true)
     public List<ResponsableExtraResponseDTO> listarResponsablesExtra(Integer idCliente) {
-        // Valida que el cliente titular exista antes de listar sus contactos
-        buscarClientePorIdOError(idCliente);
+        // Valida que el cliente titular exista y pertenezca al usuario si es CLIENTE
+        Cliente cliente = buscarClientePorIdOError(idCliente);
+        validadorAccesoCliente.validarAccesoACliente(cliente);
 
         return responsableExtraRepository.findByClienteIdCliente(idCliente).stream()
                 .map(this::mapearAResponsableResponseDTO)
@@ -138,6 +159,10 @@ public class ClienteService {
             Integer idCliente,
             Integer idResponsable,
             ResponsableExtraRequestDTO dto) {
+        // Valida que el cliente titular exista y pertenezca al usuario si es CLIENTE
+        Cliente cliente = buscarClientePorIdOError(idCliente);
+        validadorAccesoCliente.validarAccesoACliente(cliente);
+
         // Verifica que el contacto exista y pertenezca al cliente titular
         ResponsableExtra responsableExistente = buscarResponsableDeClienteOError(idCliente, idResponsable);
 
@@ -150,6 +175,10 @@ public class ClienteService {
 
     @Transactional
     public void eliminarResponsableExtra(Integer idCliente, Integer idResponsable) {
+        // Valida que el cliente titular exista y pertenezca al usuario si es CLIENTE
+        Cliente cliente = buscarClientePorIdOError(idCliente);
+        validadorAccesoCliente.validarAccesoACliente(cliente);
+
         // Busca el responsable verificando que pertenezca estrictamente al cliente
         // indicado
         ResponsableExtra responsable = buscarResponsableDeClienteOError(idCliente, idResponsable);

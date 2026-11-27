@@ -36,12 +36,16 @@ public class MascotaService {
     // Repositorio de clientes para validar la existencia del propietario
     private final ClienteRepository clienteRepository;
 
+    // Validador de pertenencia para operaciones realizadas por usuarios con rol CLIENTE
+    private final ValidadorAccesoCliente validadorAccesoCliente;
+
     // MÉTODOS PÚBLICOS DE NEGOCIO - MASCOTAS
 
     @Transactional
     public MascotaResponseDTO crearMascota(MascotaRequestDTO dto) {
-        // Verifica que el cliente propietario exista en la base de datos
+        // Verifica que el cliente propietario exista y pertenezca al usuario si es CLIENTE
         Cliente propietario = buscarClientePropietarioOError(dto.getIdCliente());
+        validadorAccesoCliente.validarAccesoACliente(propietario);
 
         // Instancia la nueva mascota activa por defecto
         Mascota nuevaMascota = Mascota.builder()
@@ -58,8 +62,9 @@ public class MascotaService {
 
     @Transactional(readOnly = true)
     public MascotaResponseDTO obtenerPorId(Integer idMascota) {
-        // Busca la mascota por su ID numérico o lanza excepción 404 si no existe
+        // Busca la mascota por su ID numérico y valida pertenencia si es CLIENTE
         Mascota mascota = buscarMascotaPorIdOError(idMascota);
+        validadorAccesoCliente.validarAccesoAMascota(mascota);
         return mapearAMascotaResponseDTO(mascota);
     }
 
@@ -73,8 +78,9 @@ public class MascotaService {
 
     @Transactional(readOnly = true)
     public List<MascotaResponseDTO> listarPorCliente(Integer idCliente) {
-        // Verifica que el cliente exista antes de consultar sus mascotas
-        buscarClientePropietarioOError(idCliente);
+        // Verifica que el cliente exista y pertenezca al usuario si es CLIENTE
+        Cliente propietario = buscarClientePropietarioOError(idCliente);
+        validadorAccesoCliente.validarAccesoACliente(propietario);
 
         // Obtiene únicamente las mascotas activas del cliente
         List<Mascota> mascotasActivas = mascotaRepository.findByClienteIdClienteAndActivoTrue(idCliente);
@@ -107,10 +113,13 @@ public class MascotaService {
 
     @Transactional
     public MascotaResponseDTO actualizarMascota(Integer idMascota, MascotaRequestDTO dto) {
-        // Obtiene la mascota existente y valida al cliente propietario indicado en el
-        // DTO
+        // Obtiene la mascota existente y valida pertenencia si es CLIENTE
         Mascota mascotaExistente = buscarMascotaPorIdOError(idMascota);
+        validadorAccesoCliente.validarAccesoAMascota(mascotaExistente);
+
+        // Valida al cliente propietario indicado en el DTO (un CLIENTE no puede transferir su mascota a otro cliente)
         Cliente propietario = buscarClientePropietarioOError(dto.getIdCliente());
+        validadorAccesoCliente.validarAccesoACliente(propietario);
 
         // Actualiza los campos de la mascota mediante la función auxiliar reutilizable
         aplicarDatosMascota(mascotaExistente, dto, propietario);
@@ -154,8 +163,9 @@ public class MascotaService {
 
     @Transactional(readOnly = true)
     public List<AntecedenteClinicoResponseDTO> listarAntecedentes(Integer idMascota, TipoAntecedente tipo) {
-        // Verifica que la mascota exista
-        buscarMascotaPorIdOError(idMascota);
+        // Verifica que la mascota exista y pertenezca al usuario si es CLIENTE
+        Mascota mascota = buscarMascotaPorIdOError(idMascota);
+        validadorAccesoCliente.validarAccesoAMascota(mascota);
 
         // Si se proporciona un tipo (ej. ALERGIA), filtra por tipo; si no, trae todo el
         // historial ordenado por fecha

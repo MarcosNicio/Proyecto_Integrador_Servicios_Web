@@ -66,6 +66,9 @@ public class SecurityConfig {
                 .formLogin(AbstractHttpConfigurer::disable)
                 .httpBasic(AbstractHttpConfigurer::disable)
                 .authorizeHttpRequests(auth -> auth
+                        // Excepción dentro de /api/auth/**: /me necesita token. Va primero porque
+                        // Spring aplica la primera regla que coincide.
+                        .requestMatchers("/api/auth/me").authenticated()
                         .requestMatchers(RUTAS_PUBLICAS).permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
