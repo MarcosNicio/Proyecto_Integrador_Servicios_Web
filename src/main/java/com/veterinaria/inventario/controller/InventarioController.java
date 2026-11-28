@@ -1,5 +1,7 @@
 package com.veterinaria.inventario.controller;
 
+import com.veterinaria.inventario.dto.MovimientoInventarioRequestDTO;
+import com.veterinaria.inventario.dto.MovimientoInventarioResponseDTO;
 import com.veterinaria.inventario.dto.ProductoRequestDTO;
 import com.veterinaria.inventario.dto.ProductoResponseDTO;
 import com.veterinaria.inventario.dto.ProductoUpdateDTO;
@@ -169,5 +171,88 @@ public class InventarioController {
             @PathVariable Integer idProducto
     ) {
         return ResponseEntity.ok(inventarioService.reactivarProducto(idProducto));
+    }
+
+    // =========================================================================
+    // ENDPOINTS DE MOVIMIENTOS DE STOCK (REGISTRO EN KARDEX)
+    // =========================================================================
+
+    // Registra una ENTRADA de mercancia incrementando el stock del producto (solo rol ADMIN).
+    @PostMapping("/movimientos/entradas")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Registrar entrada de inventario", description = "Incrementa las existencias de un producto activo por abastecimiento o compra a proveedor. Requiere cantidad mayor a 0 y rol ADMIN.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Entrada registrada exitosamente"),
+            @ApiResponse(responseCode = "400", description = "Cantidad invalida (<= 0), datos invalidos o producto inactivo"),
+            @ApiResponse(responseCode = "401", description = "Token JWT ausente o invalido"),
+            @ApiResponse(responseCode = "403", description = "Acceso denegado: se requiere rol ADMIN"),
+            @ApiResponse(responseCode = "404", description = "Producto no encontrado")
+    })
+    public ResponseEntity<MovimientoInventarioResponseDTO> registrarEntrada(
+            @Valid @RequestBody MovimientoInventarioRequestDTO dto,
+            Authentication authentication
+    ) {
+        MovimientoInventarioResponseDTO creado = inventarioService.registrarEntrada(dto, authentication.getName());
+        return ResponseEntity.status(HttpStatus.CREATED).body(creado);
+    }
+
+    // Registra un AJUSTE manual de existencias positivo o negativo distinto de 0 (solo rol ADMIN).
+    @PostMapping("/movimientos/ajustes")
+    @PreAuthorize("hasRole('ADMIN')")
+    @Operation(summary = "Registrar ajuste de inventario", description = "Corrige existencias de un producto activo por conteo fisico o merma. Acepta cantidad positiva o negativa distinta de 0 sin permitir stock negativo. Requiere rol ADMIN.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Ajuste registrado exitosamente"),
+            @ApiResponse(responseCode = "400", description = "Cantidad igual a 0, datos invalidos o producto inactivo"),
+            @ApiResponse(responseCode = "401", description = "Token JWT ausente o invalido"),
+            @ApiResponse(responseCode = "403", description = "Acceso denegado: se requiere rol ADMIN"),
+            @ApiResponse(responseCode = "404", description = "Producto no encontrado"),
+            @ApiResponse(responseCode = "409", description = "Stock insuficiente para aplicar el ajuste negativo")
+    })
+    public ResponseEntity<MovimientoInventarioResponseDTO> registrarAjuste(
+            @Valid @RequestBody MovimientoInventarioRequestDTO dto,
+            Authentication authentication
+    ) {
+        MovimientoInventarioResponseDTO creado = inventarioService.registrarAjuste(dto, authentication.getName());
+        return ResponseEntity.status(HttpStatus.CREATED).body(creado);
+    }
+
+    // Registra una SALIDA_CONSULTA por consumo clinico de insumos o medicamentos (roles ADMIN y VETERINARIO).
+    @PostMapping("/movimientos/salidas-consulta")
+    @PreAuthorize("hasAnyRole('ADMIN', 'VETERINARIO')")
+    @Operation(summary = "Registrar salida por consulta clinica", description = "Descuenta existencias de un producto activo consumido durante una consulta medica. Requiere cantidad mayor a 0 y rol ADMIN o VETERINARIO.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Salida por consulta registrada exitosamente"),
+            @ApiResponse(responseCode = "400", description = "Cantidad invalida (<= 0), datos invalidos o producto inactivo"),
+            @ApiResponse(responseCode = "401", description = "Token JWT ausente o invalido"),
+            @ApiResponse(responseCode = "403", description = "Acceso denegado: se requiere rol ADMIN o VETERINARIO"),
+            @ApiResponse(responseCode = "404", description = "Producto no encontrado"),
+            @ApiResponse(responseCode = "409", description = "Stock insuficiente para realizar el descuento")
+    })
+    public ResponseEntity<MovimientoInventarioResponseDTO> registrarSalidaConsulta(
+            @Valid @RequestBody MovimientoInventarioRequestDTO dto,
+            Authentication authentication
+    ) {
+        MovimientoInventarioResponseDTO creado = inventarioService.registrarSalidaConsulta(dto, authentication.getName());
+        return ResponseEntity.status(HttpStatus.CREATED).body(creado);
+    }
+
+    // Registra una SALIDA_VENTA por venta directa de articulos en caja o tienda (roles ADMIN y CAJERO).
+    @PostMapping("/movimientos/salidas-venta")
+    @PreAuthorize("hasAnyRole('ADMIN', 'CAJERO')")
+    @Operation(summary = "Registrar salida por venta", description = "Descuenta existencias de un producto activo vendido en mostrador o caja. Requiere cantidad mayor a 0 y rol ADMIN o CAJERO.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Salida por venta registrada exitosamente"),
+            @ApiResponse(responseCode = "400", description = "Cantidad invalida (<= 0), datos invalidos o producto inactivo"),
+            @ApiResponse(responseCode = "401", description = "Token JWT ausente o invalido"),
+            @ApiResponse(responseCode = "403", description = "Acceso denegado: se requiere rol ADMIN o CAJERO"),
+            @ApiResponse(responseCode = "404", description = "Producto no encontrado"),
+            @ApiResponse(responseCode = "409", description = "Stock insuficiente para realizar el descuento")
+    })
+    public ResponseEntity<MovimientoInventarioResponseDTO> registrarSalidaVenta(
+            @Valid @RequestBody MovimientoInventarioRequestDTO dto,
+            Authentication authentication
+    ) {
+        MovimientoInventarioResponseDTO creado = inventarioService.registrarSalidaVenta(dto, authentication.getName());
+        return ResponseEntity.status(HttpStatus.CREATED).body(creado);
     }
 }
