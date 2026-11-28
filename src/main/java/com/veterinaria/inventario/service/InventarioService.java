@@ -2,8 +2,11 @@ package com.veterinaria.inventario.service;
 
 import com.veterinaria.auth.entity.Usuario;
 import com.veterinaria.auth.repository.UsuarioRepository;
+import com.veterinaria.common.exception.BusinessException;
 import com.veterinaria.common.exception.ConflictException;
 import com.veterinaria.common.exception.ResourceNotFoundException;
+import com.veterinaria.inventario.dto.MovimientoInventarioRequestDTO;
+import com.veterinaria.inventario.dto.MovimientoInventarioResponseDTO;
 import com.veterinaria.inventario.dto.ProductoRequestDTO;
 import com.veterinaria.inventario.dto.ProductoResponseDTO;
 import com.veterinaria.inventario.dto.ProductoUpdateDTO;
@@ -17,6 +20,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Locale;
 
@@ -41,8 +45,9 @@ public class InventarioService {
     // Repositorio JPA de usuarios para resolver al responsable autenticado desde el JWT
     private final UsuarioRepository usuarioRepository;
 
-
+    // =========================================================================
     // METODOS PUBLICOS DE NEGOCIO - CATALOGO DE PRODUCTOS Y ALERTAS
+    // =========================================================================
 
     // Registra un nuevo producto normalizando su SKU y validando unicidad.
     // Si se indica un stock inicial mayor a 0, genera automaticamente un movimiento ENTRADA en el Kardex.
@@ -154,15 +159,136 @@ public class InventarioService {
                 .toList();
     }
 
+    // =========================================================================
+    // METODOS PUBLICOS DE NEGOCIO - MOVIMIENTOS DE STOCK (KARDEX)
+    // =========================================================================
 
-    
+    // Registra un movimiento de ENTRADA (abastecimiento o compra a proveedor) incrementando el stock
+    @Transactional
+    public MovimientoInventarioResponseDTO registrarEntrada(
+            MovimientoInventarioRequestDTO dto,
+            String correoUsuario
+    ) {
+        return registrarMovimiento(dto, TipoMovimiento.ENTRADA, correoUsuario);
+    }
+
+    // Registra una SALIDA_CONSULTA por consumo de medicamentos o insumos en atencion clinica
+    @Transactional
+    public MovimientoInventarioResponseDTO registrarSalidaConsulta(
+            MovimientoInventarioRequestDTO dto,
+            String correoUsuario
+    ) {
+        return registrarMovimiento(dto, TipoMovimiento.SALIDA_CONSULTA, correoUsuario);
+    }
+
+    // Registra una SALIDA_VENTA por venta directa de productos en caja o tienda
+    @Transactional
+    public MovimientoInventarioResponseDTO registrarSalidaVenta(
+            MovimientoInventarioRequestDTO dto,
+            String correoUsuario
+    ) {
+        return registrarMovimiento(dto, TipoMovimiento.SALIDA_VENTA, correoUsuario);
+    }
+
+    // Registra un AJUSTE manual de existencias (positivo por sobrante o negativo por merma/conteo)
+    @Transactional
+    public MovimientoInventarioResponseDTO registrarAjuste(
+            MovimientoInventarioRequestDTO dto,
+            String correoUsuario
+    ) {
+        return registrarMovimiento(dto, TipoMovimiento.AJUSTE, correoUsuario);
+    }
+
+    // Consulta el historial de movimientos (Kardex) de un producto concreto con filtros opcionales
+    @Transactional(readOnly = true)
+    public List<MovimientoInventarioResponseDTO> listarMovimientosPorProducto(
+            Integer idProducto,
+            TipoMovimiento tipoMovimiento,
+            LocalDateTime desde,
+            LocalDateTime hasta
+    ) {
+        validarExistenciaProducto(idProducto);
+        validarRangoFechas(desde, hasta);
+
+        return movimientoRepository.buscarKardex(idProducto, tipoMovimiento, desde, hasta).stream()
+                .map(this::mapearAMovimientoResponseDTO)
+                .toList();
+    }
+
+    // Consulta el historial general del Kardex aplicando filtros opcionales por producto, tipo y fechas
+    @Transactional(readOnly = true)
+    public List<MovimientoInventarioResponseDTO> listarMovimientos(
+            Integer idProducto,
+            TipoMovimiento tipoMovimiento,
+            LocalDateTime desde,
+            LocalDateTime hasta
+    ) {
+        if (idProducto != null) {
+            validarExistenciaProducto(idProducto);
+        }
+        validarRangoFechas(desde, hasta);
+
+        return movimientoRepository.buscarKardex(idProducto, tipoMovimiento, desde, hasta).stream()
+                .map(this::mapearAMovimientoResponseDTO)
+                .toList();
+    }
+
+    // =========================================================================
     // METODOS AUXILIARES PRIVADOS
+    // =========================================================================
+
+    // Nucleo atomico de registro de movimientos: valida cantidad, bloquea el producto contra concurrencia,
+    // verifica estado activo y stock suficiente, actualiza existencias y guarda la bitacora en el Kardex
+    private MovimientoInventarioResponseDTO registrarMovimiento(
+            MovimientoInventarioRequestDTO dto,
+            TipoMovimiento tipoMovimiento,
+            String correoUsuario
+    ) {
+        validarCantidadSegunTipo(tipoMovimiento, dto.getCantidad());
+        Usuario usuarioResponsable = buscarUsuarioPorCorreoOError(correoUsuario);
+
+        InventarioProducto producto = buscarProductoParaActualizarOError(dto.getIdProducto());
+        if (!Boolean.TRUE.equals(producto.getActivo())) {
+            throw new BusinessException(
+                    "No se pueden registrar movimientos sobre el producto inactivo: " + producto.getNombre());
+        }
+
+        int nuevoStock = calcularNuevoStockOError(producto, tipoMovimiento, dto.getCantidad());
+        producto.setStockActual(nuevoStock);
+        productoRepository.save(producto);
+
+        MovimientoInventario movimiento = MovimientoInventario.builder()
+                .producto(producto)
+                .usuario(usuarioResponsable)
+                .tipoMovimiento(tipoMovimiento)
+                .cantidad(dto.getCantidad())
+                .referencia(normalizarTextoOpcional(dto.getReferencia()))
+                .build();
+
+        MovimientoInventario movimientoGuardado = movimientoRepository.save(movimiento);
+        return mapearAMovimientoResponseDTO(movimientoGuardado);
+    }
 
     // Busca un producto por ID o lanza ResourceNotFoundException si no existe
     private InventarioProducto buscarProductoPorIdOError(Integer idProducto) {
         return productoRepository.findById(idProducto)
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "No se encontró el producto de inventario con ID: " + idProducto));
+    }
+
+    // Busca un producto aplicando bloqueo pesimista de escritura antes de modificar existencias
+    private InventarioProducto buscarProductoParaActualizarOError(Integer idProducto) {
+        return productoRepository.findByIdForUpdate(idProducto)
+                .orElseThrow(() -> new ResourceNotFoundException(
+                        "No se encontró el producto de inventario con ID: " + idProducto));
+    }
+
+    // Verifica que exista un producto con el ID indicado antes de consultar su Kardex
+    private void validarExistenciaProducto(Integer idProducto) {
+        if (!productoRepository.existsById(idProducto)) {
+            throw new ResourceNotFoundException(
+                    "No se encontró el producto de inventario con ID: " + idProducto);
+        }
     }
 
     // Resuelve el usuario autenticado a partir de su correo para registrar la auditoria en el Kardex
@@ -183,17 +309,67 @@ public class InventarioService {
         }
     }
 
+    // Valida que la cantidad sea distinta de 0 y estrictamente positiva para entradas y salidas
+    private void validarCantidadSegunTipo(TipoMovimiento tipoMovimiento, Integer cantidad) {
+        if (cantidad == null || cantidad == 0) {
+            throw new BusinessException("La cantidad del movimiento debe ser distinta de 0");
+        }
+        if (tipoMovimiento != TipoMovimiento.AJUSTE && cantidad < 0) {
+            throw new BusinessException(
+                    "Para movimientos de tipo " + tipoMovimiento + ", la cantidad debe ser mayor a 0");
+        }
+    }
+
+    // Calcula el stock resultante segun el tipo de movimiento y rechaza operaciones que dejen stock negativo
+    private int calcularNuevoStockOError(
+            InventarioProducto producto,
+            TipoMovimiento tipoMovimiento,
+            int cantidad
+    ) {
+        int variacion = switch (tipoMovimiento) {
+            case ENTRADA -> cantidad;
+            case SALIDA_CONSULTA, SALIDA_VENTA -> -cantidad;
+            case AJUSTE -> cantidad;
+        };
+
+        int nuevoStock = producto.getStockActual() + variacion;
+        if (nuevoStock < 0) {
+            throw new ConflictException(
+                    "Stock insuficiente para el producto '" + producto.getNombre()
+                            + "'. Disponible: " + producto.getStockActual()
+                            + ", requerido: " + Math.abs(variacion));
+        }
+        return nuevoStock;
+    }
+
+    // Valida consistencia del rango de fechas usado en filtros de consulta del Kardex
+    private void validarRangoFechas(LocalDateTime desde, LocalDateTime hasta) {
+        if (desde != null && hasta != null && desde.isAfter(hasta)) {
+            throw new BusinessException("La fecha inicial no puede ser posterior a la fecha final");
+        }
+    }
+
     // Elimina espacios extremos y convierte el SKU a mayusculas para almacenamiento uniforme
     private String normalizarSku(String sku) {
         return sku.trim().toUpperCase(Locale.ROOT);
     }
 
-    // Construye el patron LIKE en minusculas para busquedas parciales, o null si no se envio texto
-    private String construirPatronBusqueda(String busqueda) {
-        if (busqueda == null || busqueda.trim().isEmpty()) {
+    // Recorta espacios en un texto opcional y devuelve null si queda vacio
+    private String normalizarTextoOpcional(String texto) {
+        if (texto == null) {
             return null;
         }
-        return "%" + busqueda.trim().toLowerCase(Locale.ROOT) + "%";
+        String limpio = texto.trim();
+        return limpio.isEmpty() ? null : limpio;
+    }
+
+    // Construye el patron LIKE en minusculas para busquedas parciales, o null si no se envio texto
+    private String construirPatronBusqueda(String busqueda) {
+        String limpio = normalizarTextoOpcional(busqueda);
+        if (limpio == null) {
+            return null;
+        }
+        return "%" + limpio.toLowerCase(Locale.ROOT) + "%";
     }
 
     // Mapea la entidad InventarioProducto a su DTO de respuesta calculando el indicador de bajo stock
@@ -210,6 +386,25 @@ public class InventarioService {
                 .stockMinimo(producto.getStockMinimo())
                 .bajoStock(bajoStock)
                 .activo(producto.getActivo())
+                .build();
+    }
+
+    // Mapea la entidad MovimientoInventario a su DTO de respuesta con datos del producto y usuario responsable
+    private MovimientoInventarioResponseDTO mapearAMovimientoResponseDTO(MovimientoInventario movimiento) {
+        InventarioProducto producto = movimiento.getProducto();
+        Usuario usuario = movimiento.getUsuario();
+        return MovimientoInventarioResponseDTO.builder()
+                .idMovimiento(movimiento.getIdMovimiento())
+                .idProducto(producto.getIdProducto())
+                .skuProducto(producto.getSku())
+                .nombreProducto(producto.getNombre())
+                .idUsuario(usuario.getIdUsuario())
+                .correoUsuario(usuario.getCorreo())
+                .tipoMovimiento(movimiento.getTipoMovimiento())
+                .cantidad(movimiento.getCantidad())
+                .referencia(movimiento.getReferencia())
+                .fechaMovimiento(movimiento.getFechaMovimiento())
+                .stockActualProducto(producto.getStockActual())
                 .build();
     }
 }
