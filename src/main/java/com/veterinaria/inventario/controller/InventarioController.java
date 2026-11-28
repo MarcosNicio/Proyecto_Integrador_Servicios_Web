@@ -5,6 +5,7 @@ import com.veterinaria.inventario.dto.MovimientoInventarioResponseDTO;
 import com.veterinaria.inventario.dto.ProductoRequestDTO;
 import com.veterinaria.inventario.dto.ProductoResponseDTO;
 import com.veterinaria.inventario.dto.ProductoUpdateDTO;
+import com.veterinaria.inventario.entity.TipoMovimiento;
 import com.veterinaria.inventario.entity.TipoProducto;
 import com.veterinaria.inventario.service.InventarioService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -14,6 +15,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -29,6 +31,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 // Controlador REST para el modulo de gestion de inventario (/api/inventario).
@@ -254,5 +257,58 @@ public class InventarioController {
     ) {
         MovimientoInventarioResponseDTO creado = inventarioService.registrarSalidaVenta(dto, authentication.getName());
         return ResponseEntity.status(HttpStatus.CREATED).body(creado);
+    }
+
+    // =========================================================================
+    // ENDPOINTS DE CONSULTA DEL KARDEX
+    // =========================================================================
+
+    // Consulta el historial general del Kardex aplicando filtros opcionales por producto, tipo y rango de fechas.
+    @GetMapping("/movimientos")
+    @PreAuthorize("hasAnyRole('ADMIN', 'VETERINARIO', 'CAJERO')")
+    @Operation(summary = "Consultar historial de movimientos (Kardex general)", description = "Lista movimientos de inventario ordenados del mas reciente al mas antiguo con filtros opcionales por producto, tipo y rango de fechas ISO-8601.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Historial de movimientos obtenido correctamente"),
+            @ApiResponse(responseCode = "400", description = "Parametros o rango de fechas invalidos"),
+            @ApiResponse(responseCode = "401", description = "Token JWT ausente o invalido"),
+            @ApiResponse(responseCode = "403", description = "Acceso denegado: restringido a personal de la clinica"),
+            @ApiResponse(responseCode = "404", description = "El producto especificado en el filtro no existe")
+    })
+    public ResponseEntity<List<MovimientoInventarioResponseDTO>> listarMovimientos(
+            @Parameter(description = "Identificador opcional del producto para filtrar su Kardex", example = "1")
+            @RequestParam(required = false) Integer idProducto,
+            @Parameter(description = "Tipo opcional de movimiento (ENTRADA, SALIDA_CONSULTA, SALIDA_VENTA, AJUSTE)", example = "ENTRADA")
+            @RequestParam(required = false) TipoMovimiento tipoMovimiento,
+            @Parameter(description = "Fecha y hora inicial inclusiva en formato ISO-8601", example = "2026-11-01T00:00:00")
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime desde,
+            @Parameter(description = "Fecha y hora final inclusiva en formato ISO-8601", example = "2026-11-30T23:59:59")
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime hasta
+    ) {
+        return ResponseEntity.ok(inventarioService.listarMovimientos(idProducto, tipoMovimiento, desde, hasta));
+    }
+
+    // Consulta el Kardex especifico de un producto con filtros opcionales por tipo y rango de fechas.
+    @GetMapping("/productos/{idProducto}/movimientos")
+    @PreAuthorize("hasAnyRole('ADMIN', 'VETERINARIO', 'CAJERO')")
+    @Operation(summary = "Consultar Kardex de un producto", description = "Lista los movimientos registrados para un producto especifico ordenados del mas reciente al mas antiguo.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "Kardex del producto obtenido correctamente"),
+            @ApiResponse(responseCode = "400", description = "Parametros o rango de fechas invalidos"),
+            @ApiResponse(responseCode = "401", description = "Token JWT ausente o invalido"),
+            @ApiResponse(responseCode = "403", description = "Acceso denegado: restringido a personal de la clinica"),
+            @ApiResponse(responseCode = "404", description = "Producto no encontrado")
+    })
+    public ResponseEntity<List<MovimientoInventarioResponseDTO>> listarMovimientosPorProducto(
+            @Parameter(description = "Identificador unico del producto", example = "1")
+            @PathVariable Integer idProducto,
+            @Parameter(description = "Tipo opcional de movimiento", example = "SALIDA_CONSULTA")
+            @RequestParam(required = false) TipoMovimiento tipoMovimiento,
+            @Parameter(description = "Fecha y hora inicial inclusiva en formato ISO-8601", example = "2026-11-01T00:00:00")
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime desde,
+            @Parameter(description = "Fecha y hora final inclusiva en formato ISO-8601", example = "2026-11-30T23:59:59")
+            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime hasta
+    ) {
+        return ResponseEntity.ok(
+                inventarioService.listarMovimientosPorProducto(idProducto, tipoMovimiento, desde, hasta));
     }
 }
